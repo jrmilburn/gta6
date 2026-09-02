@@ -43,6 +43,16 @@ export async function buildDevScene(phase: string | null, game: Game): Promise<v
       m.setup(game);
       return;
     }
+    case '3': {
+      const m = await import('./phase3');
+      m.setup(game);
+      return;
+    }
+    case '7': {
+      const m = await import('./phase7');
+      m.setup(game);
+      return;
+    }
     default:
       phase0(game);
   }

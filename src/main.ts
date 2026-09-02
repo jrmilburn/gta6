@@ -5,6 +5,7 @@ import * as THREE from 'three';
 import { Game } from './core/game';
 import { param } from './core/rng';
 import { buildDevScene } from './dev/index';
+import { createSession } from './core/session';
 
 const mount = document.getElementById('app');
 if (!mount) throw new Error('#app missing');
@@ -22,7 +23,14 @@ const game = new Game(mount);
 };
 
 async function boot(): Promise<void> {
-  await buildDevScene(param('phase'), game);
+  const phase = param('phase');
+  if (phase) {
+    // Isolated per-phase development scenes; see src/dev/index.ts.
+    await buildDevScene(phase, game);
+  } else {
+    const session = createSession(game);
+    (window as unknown as { __session: unknown }).__session = session;
+  }
   game.start();
 }
 
