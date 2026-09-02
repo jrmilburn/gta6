@@ -37,7 +37,17 @@ async function boot(page: Page, query = ''): Promise<void> {
     { timeout: 60_000 },
   );
   await page.evaluate(() => window.dispatchEvent(new MouseEvent('mousedown')));
-  await page.waitForTimeout(1500);
+  // Wait for the frame rate to settle, not a fixed delay. The first seconds
+  // after boot are shader compilation -- every composited facade, every
+  // vegetation material and every car paint patch compiles on its first draw --
+  // and on CI's software renderer that is single-digit fps for a second or two.
+  // Sampling through it measures the compiler, not the game.
+  await page.waitForFunction(
+    () => (window as unknown as { __game: { fps: number } }).__game.fps > 20,
+    null,
+    { timeout: 60_000, polling: 200 },
+  );
+  await page.waitForTimeout(500);
   await installSampler(page);
 }
 

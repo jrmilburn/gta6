@@ -18,6 +18,8 @@ const QUERY_RADIUS = 30;
 const DAMAGE_PER_IMPACT = 2;
 const IMPACT_FLOOR = 2.5; // below this a scrape is free
 const SMOKE_HEALTH = 40;
+/** Beyond this a vehicle renders as a bare body; 8 m of hysteresis on the way back. */
+const DETAIL_DIST = 70;
 
 export interface VehicleControls {
   /** -1 (brake/reverse) .. 1 (throttle). */
@@ -30,6 +32,8 @@ export interface VehicleControls {
 /** Everything Vehicle needs from Game. `Game` satisfies this structurally. */
 export interface VehicleHost {
   scene: THREE.Scene;
+  /** Optional: enables the distance-based detail drop in renderSync. */
+  camera?: { position: THREE.Vector3 };
   events: { emit(evt: EventName, payload?: unknown): void };
   audio: { thud(impact: number): void };
   time: number;
@@ -84,6 +88,7 @@ export class Vehicle implements VehicleState, System, Renderable {
   private longAccel = 0;
   /** Previous physics state, for render interpolation (1.1). */
   private prev = { x: 0, y: 0, z: 0, heading: 0 };
+  private detailed = true;
 
   constructor(host: VehicleHost, opts: VehicleOptions = {}) {
     this.host = host;
@@ -166,6 +171,14 @@ export class Vehicle implements VehicleState, System, Renderable {
    * settles smoothly however many physics steps the frame happened to contain.
    */
   renderSync(alpha: number, dt: number): void {
+    const cam = this.host.camera;
+    if (cam) {
+      const dx = cam.position.x - this.pos.x, dz = cam.position.z - this.pos.z;
+      const d2 = dx * dx + dz * dz;
+      const edge = this.detailed ? DETAIL_DIST + 8 : DETAIL_DIST;
+      this.detailed = d2 < edge * edge;
+      this.mesh.setDetail(this.detailed);
+    }
     this.writeMesh(
       this.prev.x + (this.pos.x - this.prev.x) * alpha,
       this.prev.y + (this.y - this.prev.y) * alpha,

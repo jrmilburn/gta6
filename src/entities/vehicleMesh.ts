@@ -151,6 +151,9 @@ export class VehicleMesh {
   private readonly rollSpring = new Spring(V.suspensionStiffness, V.suspensionDamping);
   private spin = 0;
   private wobbleClock = 0;
+  /** Parts that only exist close up; see setDetail(). */
+  private readonly detailParts: THREE.Object3D[] = [];
+  private detailed = true;
 
   constructor(kind: VehicleKind, bodyColor: number, hero = false) {
     const data = carModelFor(kind);
@@ -180,7 +183,9 @@ export class VehicleMesh {
       box(0.34, 0.14, 0.08, 0xffffff, h.x, h.y, h.z),
     ]);
     this.owned.push(headGeo);
-    this.body.add(new THREE.Mesh(headGeo, headMat));
+    const headMesh = new THREE.Mesh(headGeo, headMat);
+    this.body.add(headMesh);
+    this.detailParts.push(headMesh);
 
     this.tailMat = this.own(new THREE.MeshStandardMaterial({
       color: 0xc01818, emissive: 0xff2a1a, emissiveIntensity: 1.0, roughness: 0.35,
@@ -191,7 +196,9 @@ export class VehicleMesh {
       box(0.30, 0.12, 0.07, 0xffffff, t.x, t.y, t.z),
     ]);
     this.owned.push(tailGeo);
-    this.body.add(new THREE.Mesh(tailGeo, this.tailMat));
+    const tailMesh = new THREE.Mesh(tailGeo, this.tailMat);
+    this.body.add(tailMesh);
+    this.detailParts.push(tailMesh);
 
     if (chassis.lightBar) {
       const barY = (chassis.bodyGeo.boundingBox?.max.y ?? 1.5) + 0.09;
@@ -223,6 +230,7 @@ export class VehicleMesh {
       spin.add(wheel);
       yaw.add(spin);
       this.group.add(yaw);
+      this.detailParts.push(yaw);
       this.yaws.push(yaw);
       this.spins.push(spin);
       this.axleY.push(slot.y);
@@ -231,6 +239,21 @@ export class VehicleMesh {
   }
 
   private own<T extends { dispose(): void }>(x: T): T { this.owned.push(x); return x; }
+
+  /**
+   * Drop everything but the body past `DETAIL_DIST` (see vehicle.ts).
+   *
+   * A car is seven draw calls -- body, two light clusters, four wheels -- and
+   * with forty traffic cars in the world that is most of the frame's budget
+   * spent on wheels that are three pixels across. The body alone is
+   * indistinguishable at that range, and the light bar stays on for police so a
+   * pursuit is still readable across a block.
+   */
+  setDetail(near: boolean): void {
+    if (near === this.detailed) return;
+    this.detailed = near;
+    for (const part of this.detailParts) part.visible = near;
+  }
 
   update(f: MeshFrame): void {
     // The raw accelerations are clamped first: at 25 m/s a hard turn peaks near

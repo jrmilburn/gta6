@@ -3,9 +3,11 @@
 import * as THREE from 'three';
 import { emptyAssets, type Assets } from '../core/assets';
 import { applyGroundAoTree } from './groundAo';
+import { attachWallRelief, facadeAlbedo, wallFor } from './surfaces';
 import { getTextures } from '../core/textures';
 import { COOL, NEON_COLORS, NEON_WORDS, PASTELS, type CityBuilding, type CityLayout } from './cityGen';
 import { MeshBuilder, cylAt } from './geomUtil';
+import { Rng } from '../core/rng';
 
 const HEIGHT_BUCKETS = [9, 18, 34, 60, Infinity];
 
@@ -65,7 +67,7 @@ function makeInstanced(
   return mesh;
 }
 
-export function buildBuildings(layout: CityLayout, _assets: Assets = emptyAssets()): THREE.Group {
+export function buildBuildings(layout: CityLayout, assets: Assets = emptyAssets()): THREE.Group {
   const tex = getTextures();
   const group = new THREE.Group();
   group.name = 'buildings';
@@ -74,6 +76,11 @@ export function buildBuildings(layout: CityLayout, _assets: Assets = emptyAssets
   const buckets = new Map<string, Slot[]>();
   const plant: Slot[] = [];
   const antennas: Slot[] = [];
+  /** Parapet ledge round the top of every flat roof (2.4). */
+  const parapets: Slot[] = [];
+  /** Tanks, vents and ducts on the roofs that get them. */
+  const clutter: Slot[] = [];
+  const clutterRng = new Rng(31337);
   const pitched: Slot[] = [];
   const neon = new Map<string, Slot[]>();
   const stripes = new MeshBuilder();
@@ -104,6 +111,16 @@ export function buildBuildings(layout: CityLayout, _assets: Assets = emptyAssets
       const tx = (top.bounds.minX + top.bounds.maxX) / 2;
       const tz = (top.bounds.minZ + top.bounds.maxZ) / 2;
 
+      if (b.roof !== 'pitch') {
+        // Parapet: a thin ledge standing proud of the wall all the way round.
+        // Without it a flat roof is a cut edge, and a cut edge is the single
+        // clearest tell that a building is a box (2.4).
+        parapets.push({
+          x: tx, y: top.y1 + 0.28, z: tz,
+          w: tw + 0.34, h: 0.56, d: td + 0.34, color: 0xcfc9bd,
+        });
+      }
+
       if (b.roof === 'plant') {
         plant.push({ x: tx, y: top.y1 + 1.6, z: tz, w: tw * 0.45, h: 3.2, d: td * 0.45, color: 0xb9b4ab });
         if (b.antenna) {
@@ -111,6 +128,29 @@ export function buildBuildings(layout: CityLayout, _assets: Assets = emptyAssets
         }
       } else if (b.roof === 'pitch') {
         pitched.push({ x: tx, y: top.y1, z: tz, w: tw * 1.06, h: Math.min(3.2, tw * 0.35), d: td * 1.06, color: 0xb4614c });
+      }
+
+      // Rooftop clutter on 60% of the taller zones (2.4): water tanks, vents and
+      // ducts, scattered inside the parapet so the skyline is not a row of
+      // clean-topped slabs.
+      if (b.roof !== 'pitch' && (b.zone === 'downtown' || b.zone === 'midtown')
+        && clutterRng.chance(0.6)) {
+        const inset = 2.2;
+        const spanX = Math.max(0, tw / 2 - inset);
+        const spanZ = Math.max(0, td / 2 - inset);
+        const n = clutterRng.int(2, 5);
+        for (let i = 0; i < n; i++) {
+          const h = clutterRng.range(0.9, 2.6);
+          clutter.push({
+            x: tx + clutterRng.range(-spanX, spanX),
+            y: top.y1 + h / 2,
+            z: tz + clutterRng.range(-spanZ, spanZ),
+            w: clutterRng.range(1.0, 2.6),
+            h,
+            d: clutterRng.range(1.0, 2.6),
+            color: clutterRng.chance(0.4) ? 0x8f9298 : 0xb3aea3,
+          });
+        }
       }
 
       if (b.neon && b.hasNeon) {
@@ -138,20 +178,49 @@ export function buildBuildings(layout: CityLayout, _assets: Assets = emptyAssets
   }
 
   // --- boxes -------------------------------------------------------------------
+  //
+  // One material per (palette, height) bucket. The albedo is the procedural
+  // window grid composited over a real wall material and weathered (2.4); the
+  // wall's normal and roughness maps ride alongside at a finer tiling, so the
+  // relief reads at arm's length without smearing the window layout.
   const boxGeo = windowBox();
+  let bucketSeed = 7000;
   for (const [key, slots] of buckets) {
     const cool = key.startsWith('1');
     let mw = 0, mh = 0;
     for (const s of slots) { mw += (s.w + s.d) / 2; mh += s.h; }
     mw /= slots.length; mh /= slots.length;
-    const map = (cool ? tex.windowsGlass : tex.windowsWarm).clone();
+    const repeatX = Math.max(1, Math.round(mw / 3)) / 8;
+    const repeatY = Math.max(1, Math.round(mh / 3)) / 8;
+
+    const wallName = wallFor(bucketSeed, cool);
+    const wall = assets.material(wallName);
+    const source = cool ? tex.windowsGlass : tex.windowsWarm;
+    const composited = facadeAlbedo(source, wall, {
+      mode: cool ? 'curtain' : 'wall',
+      // Downtown glass is cleaned; everything else is not.
+      grime: cool ? 0.35 : 1,
+      streaks: !cool,
+      shopfront: !cool,
+    }, bucketSeed++);
+
+    const map = composited ?? source.clone();
+    map.wrapS = map.wrapT = THREE.RepeatWrapping;
+    map.repeat.set(repeatX, repeatY);
     map.needsUpdate = true;
-    map.repeat.set(Math.max(1, Math.round(mw / 3)) / 8, Math.max(1, Math.round(mh / 3)) / 8);
+
     const mat = new THREE.MeshStandardMaterial({
-      map, roughness: cool ? 0.22 : 0.78, metalness: cool ? 0.35 : 0.02,
+      map,
+      // Downtown curtain wall is a near-mirror so the environment map does the
+      // work the brief asks of it; stucco and brick stay matte.
+      roughness: cool ? 0.14 : 0.82,
+      metalness: cool ? 0.55 : 0.02,
     });
+    // Relief tiles finer than the storeys do -- a brick is 0.2 m, a floor is 3.
+    attachWallRelief(mat, wall, repeatX * 3, repeatY * 3, cool ? 0.25 : 0.85);
     if (cool) {
-      // A touch of self-glow keeps glass towers from going to mud in shadow.
+      // A touch of self-glow keeps glass towers from going to mud in shadow,
+      // and at dusk it is what lights the occupied floors.
       mat.emissive = new THREE.Color(0x27466a);
       mat.emissiveMap = map;
       mat.emissiveIntensity = 0.4;
@@ -159,6 +228,16 @@ export function buildBuildings(layout: CityLayout, _assets: Assets = emptyAssets
     group.add(makeInstanced(boxGeo, mat, slots, true));
   }
 
+  if (parapets.length) {
+    const mat = new THREE.MeshStandardMaterial({ roughness: 0.9, metalness: 0.02 });
+    attachWallRelief(mat, assets.material('concrete'), 3, 1, 0.5);
+    group.add(makeInstanced(new THREE.BoxGeometry(1, 1, 1), mat, parapets, true));
+  }
+  if (clutter.length) {
+    const mat = new THREE.MeshStandardMaterial({ roughness: 0.75, metalness: 0.25 });
+    attachWallRelief(mat, assets.material('roof-metal'), 2, 2, 0.8);
+    group.add(makeInstanced(new THREE.BoxGeometry(1, 1, 1), mat, clutter, true));
+  }
   if (plant.length) {
     group.add(makeInstanced(new THREE.BoxGeometry(1, 1, 1),
       new THREE.MeshStandardMaterial({ roughness: 0.85 }), plant, true));

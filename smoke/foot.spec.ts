@@ -145,6 +145,8 @@ test('walks on foot, enters a car, drives it, and exits beside it', async ({ pag
   await page.goto('/');
   await page.waitForFunction(() => window.__game?.ready === true, null, { timeout: 30_000 });
   await page.waitForFunction(() => typeof window.__session?.player?.pos?.x === 'number', null, { timeout: 10_000 });
+  // Let shader compilation finish before anything is timed; see feel.spec.
+  await page.waitForFunction(() => window.__game.fps > 20, null, { timeout: 60_000, polling: 200 });
 
   // --- 1. spawns on foot, walking moves the player ------------------------
   const start = await state(page);

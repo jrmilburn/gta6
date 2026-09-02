@@ -2,6 +2,7 @@
 // Everything here is merged into a handful of BufferGeometries.
 import * as THREE from 'three';
 import { emptyAssets, type Assets } from '../core/assets';
+import { groundMaterial } from './surfaces';
 import { CFG } from '../config';
 import { getTextures } from '../core/textures';
 import { MeshBuilder } from './geomUtil';
@@ -87,7 +88,7 @@ function roadMarkings(): { yellow: THREE.BufferGeometry; white: THREE.BufferGeom
   return { yellow: y.build(), white: w.build() };
 }
 
-export function buildGround(layout: CityLayout, _assets: Assets = emptyAssets()): THREE.Group {
+export function buildGround(layout: CityLayout, assets: Assets = emptyAssets()): THREE.Group {
   const tex = getTextures();
   const group = new THREE.Group();
   group.name = 'ground';
@@ -96,10 +97,14 @@ export function buildGround(layout: CityLayout, _assets: Assets = emptyAssets())
   // above it, so nothing is coplanar and there is nothing to z-fight.
   const road = new MeshBuilder();
   road.top(PAVED.minX, PAVED.minZ, PAVED.maxX, PAVED.maxZ, 0, 9);
-  const roadMesh = new THREE.Mesh(road.build(), new THREE.MeshStandardMaterial({
-    map: tex.asphalt, color: 0x9a9aa2, roughness: 0.96, metalness: 0,
-    polygonOffset: true, polygonOffsetFactor: 2, polygonOffsetUnits: 4,
-  }));
+  // Real asphalt at a 6 m tile: big enough that the aggregate does not turn
+  // into visible repetition down a long street, small enough that the grain is
+  // still there at a driver's eye height (2.6).
+  const roadMat = groundMaterial(assets, 'asphalt', 9, 6, 0x6b6b73, tex.asphalt);
+  roadMat.polygonOffset = true;
+  roadMat.polygonOffsetFactor = 2;
+  roadMat.polygonOffsetUnits = 4;
+  const roadMesh = new THREE.Mesh(road.build(), roadMat);
   roadMesh.receiveShadow = true;
   group.add(roadMesh);
 
@@ -108,9 +113,9 @@ export function buildGround(layout: CityLayout, _assets: Assets = emptyAssets())
   // not read as one endless beach from the air.
   const beach = new MeshBuilder();
   beach.top(-OUTER, SAND_EDGE, OUTER, PAVED.minZ, 0, 14);
-  const beachMesh = new THREE.Mesh(beach.build(), new THREE.MeshStandardMaterial({
-    map: tex.sand, color: 0xf2e2b6, roughness: 1, metalness: 0,
-  }));
+  const beachMesh = new THREE.Mesh(beach.build(), groundMaterial(
+    assets, 'sand', 14, 5, 0xf0dfb4, tex.sand,
+  ));
   beachMesh.receiveShadow = true;
   group.add(beachMesh);
 
@@ -118,9 +123,9 @@ export function buildGround(layout: CityLayout, _assets: Assets = emptyAssets())
   scrub.top(-OUTER, PAVED.maxZ, OUTER, OUTER, 0, 20);
   scrub.top(-OUTER, PAVED.minZ, PAVED.minX, PAVED.maxZ, 0, 20);
   scrub.top(PAVED.maxX, PAVED.minZ, OUTER, PAVED.maxZ, 0, 20);
-  const scrubMesh = new THREE.Mesh(scrub.build(), new THREE.MeshStandardMaterial({
-    map: tex.sand, color: 0xcdc094, roughness: 1, metalness: 0,
-  }));
+  const scrubMesh = new THREE.Mesh(scrub.build(), groundMaterial(
+    assets, 'sand', 20, 6, 0xc6b98c, tex.sand,
+  ));
   scrubMesh.receiveShadow = true;
   group.add(scrubMesh);
 
@@ -140,9 +145,10 @@ export function buildGround(layout: CityLayout, _assets: Assets = emptyAssets())
       walk.top(bb.minX, bb.minZ, bb.maxX, bb.maxZ, KERB, 3);
     }
   }
-  const walkMesh = new THREE.Mesh(walk.build(), new THREE.MeshStandardMaterial({
-    map: tex.sidewalk, color: 0xf0ece1, roughness: 0.9, metalness: 0,
-  }));
+  // Paving stones at a 2.4 m tile: a slab is about 0.6 m, so four to a tile.
+  const walkMesh = new THREE.Mesh(walk.build(), groundMaterial(
+    assets, 'pavement', 3, 2.4, 0xece7db, tex.sidewalk,
+  ));
   walkMesh.receiveShadow = true;
   group.add(walkMesh);
 

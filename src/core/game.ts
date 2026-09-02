@@ -104,11 +104,17 @@ export class Game {
     this.last = performance.now();
     const frame = (now: number) => {
       requestAnimationFrame(frame);
-      const wall = Math.min((now - this.last) / 1000, MAX_FRAME);
+      // Two deltas. `elapsed` is how long the frame really took and is what the
+      // fps counter must use: accumulating the CLAMPED delta makes the counter
+      // saturate at 1 / MAX_FRAME (20) and report 20 fps for anything slower,
+      // which is worse than useless. `wall` is the clamped one the simulation
+      // and the smoothers see.
+      const elapsed = (now - this.last) / 1000;
+      const wall = Math.min(elapsed, MAX_FRAME);
       this.last = now;
 
       this.frames++;
-      this.fpsClock += wall;
+      this.fpsClock += elapsed;
       if (this.fpsClock >= 0.5) {
         this.fps = this.frames / this.fpsClock;
         this.frames = 0;

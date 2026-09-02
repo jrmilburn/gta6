@@ -106,7 +106,7 @@ export async function loadAssets(
         t.wrapS = THREE.RepeatWrapping;
         t.wrapT = THREE.RepeatWrapping;
         if (srgb) t.colorSpace = THREE.SRGBColorSpace;
-        t.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
+        t.anisotropy = Math.min(4, renderer.capabilities.getMaxAnisotropy());
         resolve(t);
       }, undefined, reject);
     });
