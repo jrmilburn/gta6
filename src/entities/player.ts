@@ -179,7 +179,9 @@ export class Player implements System, CameraSubject {
       // "forward" always means "away from the camera" (plan section 5).
       const basis = this.velocityHeading;
       const fx = Math.sin(basis), fz = Math.cos(basis);
-      const rx = Math.cos(basis), rz = -Math.sin(basis);
+      // Screen-right is cross(cameraForward, worldUp) = (-Fz, Fx). The previous
+      // (cos, -sin) was this negated, which swapped A and D on screen.
+      const rx = -Math.cos(basis), rz = Math.sin(basis);
       const dirX = fx * nz + rx * nx;
       const dirZ = fz * nz + rz * nx;
       const dirLen = Math.hypot(dirX, dirZ) || 1;
@@ -189,14 +191,19 @@ export class Player implements System, CameraSubject {
       this.pos.x += ux * this.speed * dt;
       this.pos.z += uz * this.speed * dt;
       this.heading = Math.atan2(ux, uz);
+
+      // The camera yaw is the basis this movement was just derived from, so
+      // letting it chase the resulting heading is a feedback loop: holding A
+      // would swing the camera left, which swings "left" further left, and the
+      // character circles instead of strafing. Only the forward component of
+      // the input is allowed to steer the camera. Pure strafe or reverse (nz
+      // <= 0) leaves it parked, so A and D read as clean sidesteps.
+      const follow = Math.max(0, nz);
+      const diff = shortestAngleDiff(this.velocityHeading, this.heading);
+      this.velocityHeading += diff * Math.min(1, dt * TURN_LAG * follow);
     } else {
       this.speed = 0;
     }
-
-    // Camera-follow heading trails the character's facing, giving the on-foot
-    // camera the "follows movement heading with lag" behaviour the plan asks for.
-    const diff = shortestAngleDiff(this.velocityHeading, this.heading);
-    this.velocityHeading += diff * Math.min(1, dt * TURN_LAG);
   }
 
   private applyVertical(dt: number): void {

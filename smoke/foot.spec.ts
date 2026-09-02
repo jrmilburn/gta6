@@ -75,7 +75,10 @@ async function walkToward(page: Page, target: Vec2, stopDist: number, maxMs: num
       const worldAngle = Math.atan2(dx, dz);
       let local = worldAngle - s.player.velocityHeading;
       local = Math.atan2(Math.sin(local), Math.cos(local)); // wrap to [-PI, PI]
-      const ix = Math.sin(local), iz = Math.cos(local);
+      // Screen-right is d x up = (-sin(h), cos(h)), so a target at a LARGER
+      // heading than the player sits to the screen-left. Hence the negation:
+      // positive `local` means press A, not D.
+      const ix = -Math.sin(local), iz = Math.cos(local);
       window.__input.set('KeyW', iz > 0.3);
       window.__input.set('KeyS', iz < -0.3);
       window.__input.set('KeyD', ix > 0.3);
