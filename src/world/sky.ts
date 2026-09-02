@@ -10,13 +10,43 @@ export interface SkyRig {
   hemi: THREE.HemisphereLight;
   ambient: THREE.AmbientLight;
   sunDir: THREE.Vector3;
+  /** Current shadow-frustum half-width in metres. */
+  extent: number;
+}
+
+/**
+ * Azimuth the sun sits in. Straight down -Z (the beach side) hides every shadow
+ * directly behind its own building when you look at the city from the water, so
+ * the sun is skewed 30 degrees off to rake the shadows diagonally across the
+ * street grid instead.
+ */
+export const SUN_AZIMUTH = -Math.PI * 2 / 3;
+
+/** How far up the light rig sits. Also sets the shadow camera's depth range. */
+const SUN_DIST = 600;
+
+/**
+ * three.js's DirectionalLightShadow never calls updateProjectionMatrix() itself,
+ * so assigning left/right/top/bottom silently leaves the default 10 m frustum in
+ * place and nothing larger than a car ever casts a shadow. The explicit call is
+ * the whole point of this helper -- do not inline it away.
+ */
+function setShadowExtent(sun: THREE.DirectionalLight, half: number): void {
+  const c = sun.shadow.camera;
+  c.left = -half; c.right = half;
+  c.top = half; c.bottom = -half;
+  c.near = 1;
+  c.far = SUN_DIST * 2 + half * 2;
+  c.updateProjectionMatrix();
 }
 
 interface Palette { top: number; horizon: number; fog: number; sun: number; sunIntensity: number; hemiIntensity: number; elevation: number }
 
 const PALETTES: Record<TimeOfDay, Palette> = {
-  day:  { top: CFG.colors.skyTop, horizon: CFG.colors.skyHorizon, fog: CFG.colors.fog, sun: CFG.colors.sun, sunIntensity: 2.8, hemiIntensity: 1.9, elevation: 18 },
-  dusk: { top: 0x2a1a5e, horizon: 0xff7a4d, fog: 0xd98a76, sun: 0xffb070, sunIntensity: 1.9, hemiIntensity: 1.0, elevation: 7 },
+  // Fill is deliberately low: at an 18 degree sun the ground only receives
+  // sin(18) of it, so a bright hemisphere washes every cast shadow flat.
+  day:  { top: CFG.colors.skyTop, horizon: CFG.colors.skyHorizon, fog: CFG.colors.fog, sun: CFG.colors.sun, sunIntensity: 2.8, hemiIntensity: 0.8, elevation: 18 },
+  dusk: { top: 0x2a1a5e, horizon: 0xff7a4d, fog: 0xd98a76, sun: 0xffb070, sunIntensity: 1.9, hemiIntensity: 0.55, elevation: 7 },
 };
 
 /** Inverted sphere with a vertex-colour zenith-to-horizon gradient. */
@@ -44,7 +74,7 @@ function makeDome(top: THREE.Color, horizon: THREE.Color): THREE.Mesh {
  * Sun comes in low from the beach side so shadows run long across the streets.
  * `beachAzimuth` is the compass direction (radians) the beach lies in.
  */
-export function buildSky(scene: THREE.Scene, time: TimeOfDay, beachAzimuth = -Math.PI / 2): SkyRig {
+export function buildSky(scene: THREE.Scene, time: TimeOfDay, beachAzimuth = SUN_AZIMUTH): SkyRig {
   const p = PALETTES[time];
   const top = new THREE.Color(p.top);
   const horizon = new THREE.Color(p.horizon);
@@ -59,16 +89,12 @@ export function buildSky(scene: THREE.Scene, time: TimeOfDay, beachAzimuth = -Ma
   const sunDir = new THREE.Vector3(Math.cos(el) * Math.cos(beachAzimuth), Math.sin(el), Math.cos(el) * Math.sin(beachAzimuth)).normalize();
 
   const sun = new THREE.DirectionalLight(p.sun, p.sunIntensity);
-  sun.position.copy(sunDir).multiplyScalar(400);
+  sun.position.copy(sunDir).multiplyScalar(SUN_DIST);
   sun.castShadow = true;
-  sun.shadow.mapSize.set(2048, 2048);
-  sun.shadow.camera.near = 1;
-  sun.shadow.camera.far = 900;
-  const s = 220;
-  sun.shadow.camera.left = -s; sun.shadow.camera.right = s;
-  sun.shadow.camera.top = s; sun.shadow.camera.bottom = -s;
-  sun.shadow.bias = -0.0006;
-  sun.shadow.normalBias = 0.03;
+  sun.shadow.mapSize.set(4096, 4096);
+  sun.shadow.bias = -0.0004;
+  sun.shadow.normalBias = 0.05;
+  setShadowExtent(sun, 160);
   scene.add(sun);
   scene.add(sun.target);
 
@@ -77,16 +103,39 @@ export function buildSky(scene: THREE.Scene, time: TimeOfDay, beachAzimuth = -Ma
   const hemi = new THREE.HemisphereLight(0x9fc7ff, 0xd9c39a, p.hemiIntensity);
   scene.add(hemi);
 
-  const ambient = new THREE.AmbientLight(horizon.getHex(), time === 'dusk' ? 0.25 : 0.45);
+  const ambient = new THREE.AmbientLight(horizon.getHex(), time === 'dusk' ? 0.18 : 0.25);
   scene.add(ambient);
 
-  return { dome, sun, hemi, ambient, sunDir };
+  return { dome, sun, hemi, ambient, sunDir, extent: 160 };
 }
 
-/** Keep the shadow frustum and sky dome centred on the camera each frame. */
-export function updateSky(rig: SkyRig, focus: THREE.Vector3): void {
+/**
+ * Keep the shadow frustum and sky dome on the action.
+ *
+ * `focus` is where the shadow detail is spent; `height` is how far the viewer is
+ * above the ground. A street-level camera gets a tight, crisp frustum; a drone
+ * at 350 m gets one wide enough to cover the skyline it can actually see.
+ */
+export function updateSky(rig: SkyRig, focus: THREE.Vector3, height = focus.y): void {
   rig.dome.position.set(focus.x, 0, focus.z);
-  rig.sun.position.copy(focus).addScaledVector(rig.sunDir, 400);
-  rig.sun.target.position.copy(focus);
+
+  const want = THREE.MathUtils.clamp(90 + height * 2.2, 90, 900);
+  // Snap so the extent only changes in steps; recompiling the projection every
+  // frame would also make the shadow edges crawl as the camera moves.
+  const stepped = Math.round(want / 60) * 60;
+  if (stepped !== rig.extent) {
+    setShadowExtent(rig.sun, stepped);
+    rig.extent = stepped;
+  }
+
+  // Texel snapping: quantise the frustum centre to whole shadow-map texels so
+  // shadow edges stop shimmering as the camera moves.
+  const texel = (rig.extent * 2) / rig.sun.shadow.mapSize.x;
+  const cx = Math.round(focus.x / texel) * texel;
+  const cz = Math.round(focus.z / texel) * texel;
+
+  rig.sun.target.position.set(cx, 0, cz);
   rig.sun.target.updateMatrixWorld();
+  rig.sun.position.set(cx, 0, cz).addScaledVector(rig.sunDir, SUN_DIST);
+  rig.sun.updateMatrixWorld();
 }

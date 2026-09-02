@@ -1,6 +1,7 @@
 // Boot: create the Game, build the world, start the loop.
 // `?phase=N` loads an isolated development scene from src/dev/ instead of the
 // full game. Phases build and verify against those before integration.
+import * as THREE from 'three';
 import { Game } from './core/game';
 import { param } from './core/rng';
 import { buildDevScene } from './dev/index';
@@ -17,6 +18,7 @@ const game = new Game(mount);
   get tris() { return game.renderer.info.render.triangles; },
   get ready() { return game.time > 0; },
   game,
+  THREE,
 };
 
 async function boot(): Promise<void> {

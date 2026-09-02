@@ -11,6 +11,9 @@ import { buildSky, updateSky, type SkyRig, type TimeOfDay } from '../world/sky';
 const STEP = 1 / 60;
 const MAX_STEPS = 5;
 
+const FORWARD = new THREE.Vector3();
+const FOCUS = new THREE.Vector3();
+
 export class Game {
   readonly scene = new THREE.Scene();
   readonly renderer: THREE.WebGLRenderer;
@@ -46,7 +49,9 @@ export class Game {
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     mount.appendChild(this.renderer.domElement);
 
-    this.camera = new THREE.PerspectiveCamera(CFG.camera.fovBase, window.innerWidth / window.innerHeight, 0.3, 2000);
+    // Far plane has to reach the horizon from a 350 m drone shot; near stays as
+    // tight as depth precision allows so kerbs and road markings don't z-fight.
+    this.camera = new THREE.PerspectiveCamera(CFG.camera.fovBase, window.innerWidth / window.innerHeight, 0.4, 5000);
     this.camera.position.set(0, 12, 24);
     this.camera.lookAt(0, 1, 0);
 
@@ -94,7 +99,15 @@ export class Game {
       }
 
       this.alpha = this.accumulator / STEP;
-      updateSky(this.sky, this.camera.position);
+      // Spend the shadow map on the ground the camera is actually looking at.
+      // Centring on the camera itself leaves half a drone shot unshadowed.
+      this.camera.getWorldDirection(FORWARD);
+      const drop = FORWARD.y < -0.05
+        ? Math.min(-this.camera.position.y / FORWARD.y, 1400)
+        : this.sky.extent * 0.45;
+      FOCUS.copy(this.camera.position).addScaledVector(FORWARD, drop);
+      FOCUS.y = 0;
+      updateSky(this.sky, FOCUS, this.camera.position.y);
       this.renderer.render(this.scene, this.camera);
       this.input.endFrame();
     };
