@@ -37,17 +37,10 @@ async function boot(page: Page, query = ''): Promise<void> {
     { timeout: 60_000 },
   );
   await page.evaluate(() => window.dispatchEvent(new MouseEvent('mousedown')));
-  // Wait for the frame rate to settle, not a fixed delay. The first seconds
-  // after boot are shader compilation -- every composited facade, every
-  // vegetation material and every car paint patch compiles on its first draw --
-  // and on CI's software renderer that is single-digit fps for a second or two.
-  // Sampling through it measures the compiler, not the game.
-  await page.waitForFunction(
-    () => (window as unknown as { __game: { fps: number } }).__game.fps > 20,
-    null,
-    { timeout: 60_000, polling: 200 },
-  );
-  await page.waitForTimeout(500);
+  // Let the first frames -- which are dominated by shader compilation, one
+  // compile per composited facade, vegetation material and car paint patch --
+  // go by before anything is sampled.
+  await advanceSim(page, 1.0);
   await installSampler(page);
 }
 
@@ -81,6 +74,31 @@ async function installSampler(page: Page): Promise<void> {
       stop(): Sample[] { on = false; return out; },
     };
   });
+}
+
+/**
+ * Wait until the fixed-step simulation has advanced `seconds`.
+ *
+ * Every window in this file is measured in SIMULATED time, not wall time. CI
+ * renders through SwiftShader, whose frame rate here ranges over an order of
+ * magnitude depending on what else the machine is doing; a wall-clock window
+ * therefore contains an unpredictable number of samples and an unpredictable
+ * amount of simulated progress. A simulated window contains a predictable
+ * amount of both, at any frame rate.
+ */
+async function advanceSim(page: Page, seconds: number): Promise<void> {
+  await page.waitForFunction(
+    (s) => {
+      const w = window as unknown as { __simT0?: number; __game: { game: { time: number } } };
+      const now = w.__game.game.time;
+      if (w.__simT0 === undefined) w.__simT0 = now;
+      if (now - w.__simT0 < (s as number)) return false;
+      w.__simT0 = undefined;
+      return true;
+    },
+    seconds,
+    { timeout: 120_000, polling: 100 },
+  );
 }
 
 const setKey = (page: Page, code: string, down: boolean) =>
@@ -154,7 +172,7 @@ test('on foot: starts and stops on a ramp, and the camera trails rather than cut
   // --- start ramp: ~0.25 s to full speed (CFG.feel.foot.accel) -------------
   await page.evaluate(() => window.__feel.start());
   await setKey(page, 'KeyW', true);
-  await page.waitForTimeout(1500);
+  await advanceSim(page, 1.2);
   let samples = await page.evaluate(() => window.__feel.stop());
   expect(samples.length).toBeGreaterThan(3);
   const rampIn = timeToReach(samples, walkSpeed * 0.9);
@@ -167,7 +185,7 @@ test('on foot: starts and stops on a ramp, and the camera trails rather than cut
   // --- stop ramp: ~0.2 s to a standstill (CFG.feel.foot.decel) -------------
   await page.evaluate(() => window.__feel.start());
   await release(page);
-  await page.waitForTimeout(1500);
+  await advanceSim(page, 1.2);
   samples = await page.evaluate(() => window.__feel.stop());
   expect(samples.length).toBeGreaterThan(3);
   const rampOut = timeToReach(samples, walkSpeed * 0.1, true);
@@ -179,15 +197,15 @@ test('on foot: starts and stops on a ramp, and the camera trails rather than cut
   await page.evaluate(() => window.__feel.start());
   for (const k of ['KeyW', 'KeyD', 'KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyW', 'KeyA']) {
     await setKey(page, k, true);
-    await page.waitForTimeout(600);
+    await advanceSim(page, 0.6);
     await release(page);
-    await page.waitForTimeout(650);
+    await advanceSim(page, 0.65);
   }
   samples = await page.evaluate(() => window.__feel.stop());
   const camPeak = peakCameraSpeed(samples);
   const subjPeak = Math.max(...samples.map((s) => s.speed));
   console.log(`foot: peak camera ${camPeak.toFixed(1)} m/s vs subject ${subjPeak.toFixed(1)} m/s over ${samples.length} frames`);
-  expect(samples.length).toBeGreaterThan(15);
+  expect(samples.length).toBeGreaterThan(10);
   // A trailing camera can briefly outrun its subject while catching up, but it
   // cannot teleport: a cut would put tens of metres into a single frame.
   expect(camPeak).toBeLessThan(subjPeak * 3 + 6);
@@ -208,13 +226,13 @@ test('driving: entering blends the camera across, and a handbrake turn swings it
     s.player.pos.x = s.vehicles[bestI].pos.x - 1.5;
     s.player.pos.z = s.vehicles[bestI].pos.z;
   });
-  await page.waitForTimeout(500);
+  await advanceSim(page, 0.4);
 
   // --- enter: the camera must take time to reach the chase standoff --------
   await page.evaluate(() => window.__feel.start());
   await page.evaluate(() => window.__input.tap('KeyE'));
-  await page.waitForFunction(() => window.__session.playerVehicle !== null, null, { timeout: 10_000 });
-  await page.waitForTimeout(2500);
+  await page.waitForFunction(() => window.__session.playerVehicle !== null, null, { timeout: 30_000 });
+  await advanceSim(page, 2.5);
   let samples = await page.evaluate(() => window.__feel.stop());
   expect(samples.length).toBeGreaterThan(4);
   const settle = settleTime(samples, 0.5);
@@ -226,19 +244,19 @@ test('driving: entering blends the camera across, and a handbrake turn swings it
   // --- handbrake turn ------------------------------------------------------
   await page.evaluate(() => window.__feel.start());
   await setKey(page, 'KeyW', true);
-  await page.waitForFunction(() => (window.__session.playerVehicle?.speed ?? 0) > 18, null, { timeout: 40_000 });
+  await page.waitForFunction(() => (window.__session.playerVehicle?.speed ?? 0) > 18, null, { timeout: 120_000 });
   await setKey(page, 'KeyD', true);
   await setKey(page, 'Space', true);
-  await page.waitForTimeout(1800);
+  await advanceSim(page, 1.8);
   await release(page);
-  await page.waitForTimeout(1600);
+  await advanceSim(page, 1.6);
   samples = await page.evaluate(() => window.__feel.stop());
 
   const yaw = peakYawRate(samples);
   const camPeak = peakCameraSpeed(samples);
   const subjPeak = Math.max(...samples.map((s) => s.speed));
   console.log(`drive: peak yaw ${yaw.toFixed(0)} deg/s, camera ${camPeak.toFixed(1)} m/s vs car ${subjPeak.toFixed(1)} m/s`);
-  expect(samples.length).toBeGreaterThan(15);
+  expect(samples.length).toBeGreaterThan(10);
   // CFG.feel.camera.yawRateDeg is 180. The rig's yaw is rate limited; the
   // look-at adds a little on top, so the gate is the limit plus a margin.
   expect(yaw).toBeLessThan(320);

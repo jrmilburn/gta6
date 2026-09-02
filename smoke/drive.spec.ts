@@ -1,6 +1,29 @@
 // Phase 2 driving assertions. Runs against the ?phase=2 dev scene, which exposes
 // window.__vehicle and drives input through window.__input.
 import { test, expect, type Page, type ConsoleMessage } from '@playwright/test';
+
+/**
+ * Wait until the fixed-step simulation has advanced `seconds`.
+ *
+ * Every window that measures how far the car got has to be phrased in simulated
+ * time: the loop clamps how much wall time one frame may simulate, so on the
+ * software rasteriser 900 ms of wall clock can be 90 ms of driving, and a
+ * handbrake turn measured that way reads as 5 degrees instead of 90.
+ */
+async function advanceSim(page: Page, seconds: number): Promise<void> {
+  await page.waitForFunction(
+    (s) => {
+      const w = window as unknown as { __simT0?: number; __game: { game: { time: number } } };
+      const now = w.__game.game.time;
+      if (w.__simT0 === undefined) w.__simT0 = now;
+      if (now - w.__simT0 < (s as number)) return false;
+      w.__simT0 = undefined;
+      return true;
+    },
+    seconds,
+    { timeout: 300_000, polling: 100 },
+  );
+}
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -54,10 +77,12 @@ test('drives, drifts and crashes', async ({ page }) => {
   // --- 1. accelerate ------------------------------------------------------
   const start = await probe(page);
   await key(page, 'KeyW', true);
-  // Headless SwiftShader steps the fixed-timestep loop slower than wall clock,
-  // so poll for the threshold instead of trusting exactly 3 s of wall time.
-  await page.waitForFunction(() => window.__vehicle.speed > 20, null, { timeout: 20_000 });
-  await page.waitForTimeout(1000);
+  // Headless SwiftShader steps the fixed-timestep loop far slower than wall
+  // clock, so poll for the threshold rather than trusting a wall-time window --
+  // and give it room, because how much slower depends on what else the machine
+  // is doing and has ranged over an order of magnitude within one session.
+  await page.waitForFunction(() => window.__vehicle.speed > 20, null, { timeout: 180_000 });
+  await advanceSim(page, 1.0);
   const moving = await probe(page);
   console.log(`accel: speed=${moving.speed.toFixed(1)} dz=${(moving.z - start.z).toFixed(1)}`);
   expect(moving.speed).toBeGreaterThan(20);
@@ -68,11 +93,11 @@ test('drives, drifts and crashes', async ({ page }) => {
   await key(page, 'KeyW', false);
   await reset(page, 0, -80, 0);
   await key(page, 'KeyW', true);
-  await page.waitForFunction(() => window.__vehicle.speed > 24, null, { timeout: 20_000 });
+  await page.waitForFunction(() => window.__vehicle.speed > 24, null, { timeout: 180_000 });
   const beforeTurn = await probe(page);
   await key(page, 'KeyD', true);
   await key(page, 'Space', true);
-  await page.waitForTimeout(900);
+  await advanceSim(page, 0.9);
   const afterTurn = await probe(page);
   await key(page, 'Space', false);
   await key(page, 'KeyD', false);
@@ -86,9 +111,9 @@ test('drives, drifts and crashes', async ({ page }) => {
   // --- 3. wall crash ------------------------------------------------------
   await reset(page, 0, 30, 0); // wall spans z = 84..88
   await key(page, 'KeyW', true);
-  await page.waitForFunction(() => window.__vehicle.health < 100, null, { timeout: 20_000 });
+  await page.waitForFunction(() => window.__vehicle.health < 100, null, { timeout: 180_000 });
   await key(page, 'KeyW', false);
-  await page.waitForTimeout(600);
+  await advanceSim(page, 0.6);
   const crashed = await probe(page);
   console.log(`crash: health=${crashed.health.toFixed(0)} speed=${crashed.speed.toFixed(1)} z=${crashed.z.toFixed(1)}`);
   expect(crashed.health).toBeLessThan(100);
@@ -101,13 +126,13 @@ test('drives, drifts and crashes', async ({ page }) => {
   // threshold without wrecking it outright.
   await page.evaluate(() => { window.__vehicle.vehicle.health = 70; });
   await key(page, 'KeyW', true);
-  await page.waitForFunction(() => window.__vehicle.health < 69, null, { timeout: 20_000 });
+  await page.waitForFunction(() => window.__vehicle.health < 69, null, { timeout: 180_000 });
   await key(page, 'KeyW', false);
-  await page.waitForTimeout(500);
+  await advanceSim(page, 0.5);
   const smoking = await probe(page);
   console.log(`smoke test: health=${smoking.health.toFixed(0)} wrecked=${smoking.wrecked}`);
   expect(smoking.health).toBeLessThan(40);
-  await page.waitForTimeout(1200);
+  await advanceSim(page, 1.2);
   await shoot(page, 'smoke');
 
   expect(errors, `console errors:\n${errors.join('\n')}`).toEqual([]);

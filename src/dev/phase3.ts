@@ -10,7 +10,8 @@ import type { AABB, Vec2 } from '../types';
 import type { Game } from '../core/game';
 import { Vehicle, PlayerDriver } from '../entities/vehicle';
 import { CameraRig } from '../camera/cameras';
-import { Player, findEnterable, exitPointFor, FOOT_CAMERA } from '../entities/player';
+import { Player, findEnterable, exitPointFor } from '../entities/player';
+import { FOOT_CAMERA } from '../camera/footCamera';
 import { CFG } from '../config';
 
 function sandTexture(): THREE.CanvasTexture {

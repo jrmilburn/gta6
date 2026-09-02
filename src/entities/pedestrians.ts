@@ -23,9 +23,7 @@ const EDGE_LEN = CFG.city.blockSize - 2 * INSET;
 const RECYCLE_DIST = 250;
 const CROSS_PROB = 0.1;
 const CROSS_CHECK_RADIUS = 15;
-const TUMBLE_TOSS = 0.9;   // rise + spin + land, combined into one arc
-const TUMBLE_LIE = 2.0;    // lie flat afterwards
-const TUMBLE_GETUP = 0.3;
+import { posePed, TUMBLE_TOSS, TUMBLE_LIE, TUMBLE_GETUP } from './pedPose';
 
 type PedMode = 'wander' | 'cross' | 'flee' | 'tumble';
 
@@ -122,14 +120,6 @@ function obbContainsPoint(v: PedVehicleLike, px: number, pz: number): boolean {
   const across = dx * rx + dz * rz;
   return Math.abs(along) < V_HALF_LEN + HIT_MARGIN && Math.abs(across) < V_HALF_WID + HIT_MARGIN;
 }
-
-const M_BASE = new THREE.Matrix4();
-const V_POS = new THREE.Vector3();
-const V_SCALE = new THREE.Vector3(1, 1, 1);
-const Q_YAW = new THREE.Quaternion();
-const Q_TUMBLE = new THREE.Quaternion();
-const AXIS_X = new THREE.Vector3(1, 0, 0);
-const AXIS_Y = new THREE.Vector3(0, 1, 0);
 
 export class PedestrianSystem implements System {
   readonly mesh: PedMeshPool;
@@ -381,34 +371,7 @@ export class PedestrianSystem implements System {
   // --- rendering ---------------------------------------------------------------
 
   private updatePose(p: Ped, dt: number): void {
-    p.phase += dt;
-    let legSwing = 0, armSwing = 0, armsUp = false;
-    let quat = Q_YAW;
-
-    if (p.mode === 'tumble') {
-      const lieEnd = TUMBLE_TOSS + TUMBLE_LIE;
-      if (p.tumbleT <= TUMBLE_TOSS) {
-        Q_TUMBLE.setFromAxisAngle(p.tumbleAxis, (p.tumbleT / TUMBLE_TOSS) * Math.PI * 2);
-      } else if (p.tumbleT <= lieEnd) {
-        Q_TUMBLE.setFromAxisAngle(AXIS_X, Math.PI / 2); // lying flat
-      } else {
-        const u = 1 - Math.min(1, (p.tumbleT - lieEnd) / TUMBLE_GETUP);
-        Q_TUMBLE.setFromAxisAngle(AXIS_X, (Math.PI / 2) * u); // getting up
-      }
-      quat = Q_TUMBLE;
-    } else {
-      Q_YAW.setFromAxisAngle(AXIS_Y, p.heading);
-      if (p.speed > 0.05) {
-        const fleeing = p.mode === 'flee';
-        const amp = fleeing ? 0.75 : 0.45, freq = fleeing ? 7.5 : 4.2;
-        legSwing = Math.sin(p.phase * freq) * amp;
-        armSwing = legSwing;
-      }
-      armsUp = p.mode === 'flee';
-    }
-
-    M_BASE.compose(V_POS.set(p.pos.x, p.y, p.pos.z), quat, V_SCALE.setScalar(p.scale));
-    this.mesh.setPose(p.variant, p.slot, M_BASE, legSwing, armSwing, armsUp);
+    posePed(this.mesh, p, dt);
   }
 
   dispose(): void { this.mesh.dispose(); }

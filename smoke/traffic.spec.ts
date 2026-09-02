@@ -41,16 +41,18 @@ test('traffic flows without gridlock, pedestrians wander, and scatter when drive
   // minute. Game.step() caps at 5 fixed ticks per rendered frame, so on the
   // software rasteriser (~7 fps) simulated time runs at roughly half real time
   // and that minute costs ~120 s of wall clock.
-  test.setTimeout(320_000);
+  // This spec holds the world for 60 SIMULATED seconds, which on the software
+  // rasteriser can be ten times that in wall clock.
+  test.setTimeout(1_200_000);
   const errors: string[] = [];
   page.on('console', (m: ConsoleMessage) => { if (m.type() === 'error') errors.push(m.text()); });
   page.on('pageerror', (e) => errors.push(String(e)));
 
   await page.goto('/');
-  await page.waitForFunction(() => (window as unknown as { __game?: { ready: boolean } }).__game?.ready === true, null, { timeout: 30_000 });
+  await page.waitForFunction(() => (window as unknown as { __game?: { ready: boolean } }).__game?.ready === true, null, { timeout: 180_000 });
   await page.waitForFunction(
     () => Array.isArray((window as unknown as { __session?: { traffic?: { cars: unknown[] } } }).__session?.traffic?.cars),
-    null, { timeout: 10_000 },
+    null, { timeout: 180_000 },
   );
 
   // --- 1. traffic cars exist, are spread across the city, and are moving -----
@@ -75,10 +77,13 @@ test('traffic flows without gridlock, pedestrians wander, and scatter when drive
   await page.waitForFunction((target: number) => {
     const g = (window as unknown as { __game: { game: { time: number } } }).__game;
     return g.game.time - target >= 60;
-    // Game.step() caps at 5 fixed ticks per rendered frame, so on the software
-    // rasteriser (~7 fps) simulated time advances at roughly half real time.
-    // 60 simulated seconds can therefore take ~120 s of wall clock.
-  }, t0, { timeout: 260_000 });
+    // Game.step() caps at 5 fixed ticks per rendered frame, and the loop clamps
+    // how much wall time one frame may simulate, so on the software rasteriser
+    // simulated time advances far slower than real time -- by a factor that has
+    // ranged from 2 to 20 within one session depending on machine load. The
+    // assertion is about the traffic model, not the clock, so the window is
+    // sized for the worst case rather than the typical one.
+  }, t0, { timeout: 900_000 });
   const cars2 = await trafficCars(page);
   const moving2 = cars2.filter((c) => Math.abs(c.speed) > 1).length;
   console.log(`moving after 60 simulated seconds: ${moving2}/${cars2.length}`);
@@ -130,7 +135,7 @@ test('traffic flows without gridlock, pedestrians wander, and scatter when drive
   await page.evaluate(() => (window as unknown as { __input: { tap(c: string): void } }).__input.tap('KeyE'));
   await page.waitForFunction(
     () => (window as unknown as { __session: { player: { onFoot: boolean } } }).__session.player.onFoot === false,
-    null, { timeout: 5_000 },
+    null, { timeout: 60_000 },
   );
 
   // 40 traffic cars are already scaring pedestrians all over the city, so a

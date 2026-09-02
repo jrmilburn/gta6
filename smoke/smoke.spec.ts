@@ -63,3 +63,34 @@ test('boots, renders, holds framerate, no console errors', async ({ page }) => {
   if (process.env.ENFORCE_FPS === '1') expect(fps).toBeGreaterThanOrEqual(MIN_FPS);
   expect(fps).toBeGreaterThan(0);
 });
+
+test('runs fully procedural with the asset bundle skipped', async ({ page }) => {
+  // ASSETS.md promises every downloaded category degrades to what the game
+  // shipped with. `?assets=0` takes that path without deleting the files, so
+  // the promise is checked rather than asserted.
+  const errors = collectErrors(page);
+  await page.goto('/?assets=0&nohud=1');
+  await page.waitForFunction(() => (window as unknown as { __game?: { ready: boolean } }).__game?.ready === true, null, { timeout: 60_000 });
+  await page.waitForTimeout(4000);
+
+  const state = await page.evaluate(() => {
+    const w = window as unknown as {
+      __game: { sceneCalls: number; tris: number };
+      __session: { vehicles: unknown[]; player: { pos: { x: number } } };
+    };
+    return {
+      calls: w.__game.sceneCalls,
+      tris: w.__game.tris,
+      vehicles: w.__session.vehicles.length,
+      spawned: typeof w.__session.player.pos.x === 'number',
+    };
+  });
+  console.log(`procedural fallback: sceneDrawCalls=${state.calls} tris=${state.tris} vehicles=${state.vehicles}`);
+  await shoot(page, 'procedural-fallback');
+
+  expect(errors, `console errors: ${errors.join(' | ')}`).toEqual([]);
+  // A world still got built: geometry, cars and a placed player.
+  expect(state.tris).toBeGreaterThan(10_000);
+  expect(state.vehicles).toBeGreaterThan(0);
+  expect(state.spawned).toBe(true);
+});

@@ -5,3 +5,7 @@ test-results
 playwright-report
 .DS_Store
 test-results/
+
+# Mixamo FBX source drops: licence-incompatible with ASSETS.md and ~320 MB.
+# Kept on disk, never committed.
+public/assets/raw/

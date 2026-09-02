@@ -63,6 +63,19 @@ async function boot(): Promise<void> {
   // the screen, its keypress handler is inert until the bar reaches 1, and the
   // world is not built until then either.
   let assets: Assets;
+  if (param('assets') === '0') {
+    // Exercise the fallback path without deleting the files: every category is
+    // supposed to degrade to what the game shipped with (see ASSETS.md), and a
+    // claim like that is worth being able to check.
+    console.log('assets: skipped by ?assets=0, running fully procedural');
+    assets = emptyAssets();
+    const session = createSession(game, assets, screens);
+    (window as unknown as { __session: unknown }).__session = session;
+    installShotHook(game, session);
+    screens.setProgress(1, 'ready');
+    game.start();
+    return;
+  }
   try {
     assets = await loadAssets(game.renderer, HDRI[game.timeOfDay], (f, label) => {
       screens.setProgress(f * 0.98, stageFor(label));

@@ -99,7 +99,12 @@ the omission is deliberate rather than an oversight.
 Every category keeps its procedural path working, and the game never blocks on a
 download. `src/core/assets.ts` loads everything up front behind the title
 screen's progress bar; any file that fails to load is reported once to the
-console and the caller falls back to what the game shipped with:
+console and the caller falls back to what the game shipped with.
+
+**Check it rather than trust it:** `?assets=0` skips the whole bundle and runs
+fully procedural. `smoke/smoke.spec.ts` asserts that path boots with no console
+errors and still builds a world (228 draw calls, 1.4 M triangles, cars, a placed
+player), so the promise below cannot quietly rot.
 
 | Category | Fallback if the asset is missing |
 |---|---|
@@ -108,6 +113,9 @@ console and the caller falls back to what the game shipped with:
 | Trees / palms | The procedural palm fronds and icosahedron canopies in `world/props.ts`. |
 | PBR textures | The canvas-generated textures in `core/textures.ts`. |
 | Characters | Always procedural — see below. |
+
+`?post=0` is the separate framerate fallback: it drops ambient occlusion and
+bloom and renders straight to the canvas.
 
 ## Characters: no downloaded model (deliberate)
 

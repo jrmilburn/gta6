@@ -14,7 +14,7 @@ import { SpatialHash } from '../core/spatial';
 import { InputSmoother, shortestAngle, smoothDamp, smoothDampAngle } from '../core/smooth';
 import { PlayerMesh } from './playerMesh';
 import { Legs } from './playerJump';
-import { registerCameraMode, type CameraFrame, type CameraModeName, type CameraSubject } from '../camera/cameras';
+import type { CameraSubject } from '../camera/cameras';
 
 const RADIUS = 0.4;
 const QUERY_RADIUS = 12;
@@ -388,29 +388,3 @@ export class Player implements System, Renderable, CameraSubject {
     this.mesh.group.rotation.y = heading;
   }
 }
-
-// --- on-foot camera mode ---------------------------------------------------
-//
-// DECISION: CameraModeName is a closed union owned by camera/cameras.ts,
-// which is outside this phase's file ownership, so a new mode name can't be
-// added to that type. The plan explicitly allows registering an additional
-// mode from this file via the existing `registerCameraMode` API; the name is
-// cast through the closed union rather than edited into it.
-export const FOOT_CAMERA = 'foot' as unknown as CameraModeName;
-
-const FOOT_DIST = 4;
-const FOOT_HEIGHT = 2;
-const FOOT_LOOK_AHEAD = 1.4;
-
-registerCameraMode(FOOT_CAMERA, (s: CameraSubject, f: CameraFrame) => {
-  // Third-person over-shoulder: eye trails the lagged camera-follow heading,
-  // look-at leads with the character's actual facing (plan section 5).
-  const dir = s.velocityHeading;
-  const fx = Math.sin(dir), fz = Math.cos(dir);
-  f.eye.set(s.pos.x - fx * FOOT_DIST, s.y + FOOT_HEIGHT, s.pos.z - fz * FOOT_DIST);
-  const bx = Math.sin(s.heading), bz = Math.cos(s.heading);
-  f.look.set(s.pos.x + bx * FOOT_LOOK_AHEAD, s.y + 1.5, s.pos.z + bz * FOOT_LOOK_AHEAD);
-  f.fov = CFG.camera.fovBase;
-  f.posSmooth = CFG.feel.camera.footPos;
-  f.lookSmooth = CFG.feel.camera.footLook;
-});

@@ -10,10 +10,12 @@ import { buildGround } from '../world/ground';
 import { buildBuildings } from '../world/buildings';
 import { buildProps } from '../world/props';
 import { buildVegetation } from '../world/vegetation';
+import { buildStreetProps } from '../world/streetProps';
 import { buildWater } from '../world/water';
 import { Vehicle, PlayerDriver } from '../entities/vehicle';
 import { initCarModels } from '../entities/carModels';
-import { Player, findEnterable, exitPointFor, FOOT_CAMERA } from '../entities/player';
+import { Player, findEnterable, exitPointFor } from '../entities/player';
+import { FOOT_CAMERA } from '../camera/footCamera';
 import { TrafficSystem } from '../entities/traffic';
 import { PedestrianSystem } from '../entities/pedestrians';
 import { CameraRig, cameraModeNames, type CameraModeName } from '../camera/cameras';
@@ -93,6 +95,8 @@ export function createSession(game: Game, assets: Assets, screens?: ScreensApi):
   game.scene.add(buildGround(city, assets));
   game.scene.add(buildBuildings(city, assets));
   game.scene.add(buildProps(city, assets, vegetation.active));
+  const street = buildStreetProps(city, assets);
+  if (street) game.scene.add(street);
 
   const water = buildWater(game.sky.sunDir);
   game.scene.add(water.mesh);
