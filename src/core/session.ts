@@ -12,6 +12,8 @@ import { buildProps } from '../world/props';
 import { buildWater } from '../world/water';
 import { Vehicle, PlayerDriver } from '../entities/vehicle';
 import { Player, findEnterable, exitPointFor, FOOT_CAMERA } from '../entities/player';
+import { TrafficSystem } from '../entities/traffic';
+import { PedestrianSystem } from '../entities/pedestrians';
 import { CameraRig, cameraModeNames, type CameraModeName } from '../camera/cameras';
 import { createUi, type Ui } from '../ui/index';
 import { CFG } from '../config';
@@ -23,6 +25,12 @@ export interface Session {
   ui: Ui;
   city: CityLayout;
   vehicles: Vehicle[];
+  /** Traffic AI cars on the lane graph (plan section 6). Ordinary Vehicle
+   * instances -- always included in `vehicles`-like peer/collision lists via
+   * `allVehicles` below, so the player can crash into and steal them. */
+  traffic: TrafficSystem;
+  /** Sidewalk pedestrians (plan section 6). */
+  peds: PedestrianSystem;
   /** The player's on-foot controller; hidden and inert while driving. */
   player: Player;
   /** The car the player is currently driving, or null while on foot. */
@@ -96,12 +104,30 @@ export function createSession(game: Game): Session {
   }
 
   const player = new Player(game, { pos: city.spawns.player, colliders: city.colliders });
-  player.setVehicles(vehicles);
   player.setRespawnPoint(stationSpot);
 
   // The vehicle currently occupied by the player, or null while on foot.
   let current: Vehicle | null = null;
   const driver = new PlayerDriver(game, vehicles[0]);
+
+  // Traffic (plan section 6): AI cars on the lane graph, spawned at least
+  // 60 m from the player. They are ordinary Vehicle instances, so they join
+  // the same peer-collision list as the garage cars below -- the player can
+  // crash into and steal them (session.ts is what makes "stealing" work: once
+  // E sets `occupied = true` on one, TrafficSystem's update() skips it).
+  const traffic = new TrafficSystem(game, city, () => player.pos, () => current);
+
+  // Every drivable body in the world (garage cars, the spare, and traffic)
+  // collides with every other one, and is something the player can hit, be
+  // hit by, or step into.
+  const allVehicles: Vehicle[] = [...vehicles, ...traffic.cars];
+  for (const v of allVehicles) v.setPeers(allVehicles);
+  player.setVehicles(allVehicles);
+
+  // Pedestrians (plan section 6): sidewalk wanderers that flee and tumble
+  // when hit by any of the same vehicles.
+  const peds = new PedestrianSystem(game, () => player.pos);
+  peds.setVehicles(allVehicles);
 
   const rig = new CameraRig(game, city.colliders);
   rig.setSubject(player);
@@ -115,6 +141,11 @@ export function createSession(game: Game): Session {
   // parked cars keep stepping their own physics via the loop below.
   game.add({ update: (dt) => { if (current) driver.update(dt); } });
   for (const v of vehicles) game.add(v);
+  // System order (plan section 1.1): input -> player -> vehicles -> traffic
+  // -> pedestrians -> ... -> cameras.
+  for (const v of traffic.cars) game.add(v);
+  game.add(traffic);
+  game.add(peds);
   game.add(rig);
   game.add({ update: () => { if (game.input.justPressed('camera')) rig.cycle(); } });
 
@@ -124,7 +155,7 @@ export function createSession(game: Game): Session {
     update: () => {
       if (!game.input.justPressed('interact')) return;
       if (player.onFoot) {
-        const target = findEnterable(vehicles, player.pos, CFG.player.enterRadius);
+        const target = findEnterable(allVehicles, player.pos, CFG.player.enterRadius);
         if (!target) return;
         target.occupied = true;
         current = target;
@@ -171,7 +202,7 @@ export function createSession(game: Game): Session {
   });
 
   const session: Session = {
-    city, vehicles, player, driver, rig,
+    city, vehicles, traffic, peds, player, driver, rig,
     get playerVehicle() { return current; },
     // Assigned below: createUi needs the session it reads state from.
     ui: null as unknown as Ui,
