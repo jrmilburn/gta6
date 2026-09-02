@@ -1,63 +1,22 @@
-// Blocky humanoid built from boxes only (plan section 5): head, torso, two
-// arms, two legs, pivoted at shoulders and hips. Procedural walk cycle swings
-// limbs with sin(t * stride), amplitude and frequency scaling with speed;
-// idle plays a subtle breathing scale on the torso. Outfit: teal shirt, white
-// shorts, sun hat.
-//
-// DECISION: vehicleMesh.ts already has a `box()`/`bake()` pair that does
-// exactly what this file needs (merge boxes into one vertex-coloured
-// geometry), but those helpers are module-private there and vehicleMesh.ts is
-// outside this phase's file ownership, so they are duplicated here rather
-// than exported from a file another agent might be touching.
+// Visual shell for the on-foot player: an anatomically proportioned humanoid
+// assembled from the shared geometry in humanoid.ts. Physics (player.ts) writes
+// group.position / group.rotation.y; everything in here is cosmetic.
 import * as THREE from 'three';
+import {
+  buildHumanoidGeometry, walkPose, idlePose, emptyPose,
+  L, type HumanoidGeometry, type Palette, type Pose,
+} from './humanoid';
 
-const SKIN = 0xe3ad7c;
-const SHIRT = 0x1f8f86;
-const SHORTS = 0xf4f1e6;
-const HAT = 0xe8c468;
-const HAT_BAND = 0x2f7f7a;
-
-interface Part { geo: THREE.BufferGeometry; color: number; x?: number; y?: number; z?: number }
-
-function box(w: number, h: number, d: number, color: number, x = 0, y = 0, z = 0): Part {
-  return { geo: new THREE.BoxGeometry(w, h, d), color, x, y, z };
-}
-
-/** Bake parts into one non-indexed vertex-coloured geometry (one draw call). */
-function bake(parts: Part[]): THREE.BufferGeometry {
-  const pos: number[] = [], nor: number[] = [], col: number[] = [];
-  const c = new THREE.Color();
-  const m = new THREE.Matrix4();
-  for (const p of parts) {
-    const g = p.geo.toNonIndexed();
-    m.identity().setPosition(p.x ?? 0, p.y ?? 0, p.z ?? 0);
-    g.applyMatrix4(m);
-    const pa = g.getAttribute('position'), na = g.getAttribute('normal');
-    c.set(p.color).convertSRGBToLinear();
-    for (let i = 0; i < pa.count; i++) {
-      pos.push(pa.getX(i), pa.getY(i), pa.getZ(i));
-      nor.push(na.getX(i), na.getY(i), na.getZ(i));
-      col.push(c.r, c.g, c.b);
-    }
-    g.dispose();
-    p.geo.dispose();
-  }
-  const out = new THREE.BufferGeometry();
-  out.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-  out.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
-  out.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
-  out.computeBoundingSphere();
-  return out;
-}
-
-// Proportions in metres, feet at local y = 0 (plan: capsule height 1.8).
-const HIP_Y = 0.86;
-const SHOULDER_Y = 1.5;
-const HEAD_Y = 1.72;
-const LEG_LEN = HIP_Y;
-const ARM_LEN = 0.58;
-const HIP_X = 0.16;
-const SHOULDER_X = 0.36;
+// DECISION: the player reads as a local in a sun-bleached coastal city rather
+// than the plan's literal "teal shirt, white shorts, sun hat" -- the hat was a
+// box on top of a box, and with a real skull it looked like a bucket.
+const PLAYER_PALETTE: Palette = {
+  skin: 0xc98d63,
+  hair: 0x2e2018,
+  shirt: 0x1f9c8a,
+  trousers: 0xe8e2d4,
+  shoes: 0xf2f0eb,
+};
 
 export interface PlayerMeshFrame {
   dt: number;
@@ -66,108 +25,109 @@ export interface PlayerMeshFrame {
   runSpeed: number;
 }
 
-/**
- * Visual shell for the on-foot player. Physics (player.ts) writes
- * `group.position` / `group.rotation.y`; everything here is cosmetic.
- */
+/** One articulated limb: pivot at the joint, child pivot for the second bone. */
+interface Limb {
+  root: THREE.Group;
+  joint: THREE.Group;
+}
+
 export class PlayerMesh {
   readonly group = new THREE.Group();
 
+  private readonly geo: HumanoidGeometry;
+  private readonly material: THREE.MeshStandardMaterial;
   private readonly torso = new THREE.Group();
-  private readonly hipL = new THREE.Group();
-  private readonly hipR = new THREE.Group();
-  private readonly shoulderL = new THREE.Group();
-  private readonly shoulderR = new THREE.Group();
-  private readonly owned: Array<{ dispose(): void }> = [];
+  private readonly head: THREE.Mesh;
+  private readonly legL: Limb;
+  private readonly legR: Limb;
+  private readonly armL: Limb;
+  private readonly armR: Limb;
+  private readonly pose: Pose = emptyPose();
   private phase = 0;
 
-  constructor() {
-    const skinMat = this.own(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.75 }));
+  constructor(palette: Palette = PLAYER_PALETTE) {
+    this.geo = buildHumanoidGeometry(palette);
+    this.material = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.72 });
 
-    // Torso + shorts, baked together; pivoted at the hips so the idle
-    // breathing scale stretches the chest upward rather than the legs.
-    this.torso.position.set(0, HIP_Y, 0);
-    const torsoGeo = bake([
-      box(0.64, 0.22, 0.34, SHORTS, 0, 0.03, 0),
-      box(0.60, 0.60, 0.30, SHIRT, 0, 0.34, 0),
-    ]);
-    this.owned.push(torsoGeo);
-    const torsoMesh = new THREE.Mesh(torsoGeo, skinMat);
-    torsoMesh.castShadow = true;
-    torsoMesh.receiveShadow = true;
-    this.torso.add(torsoMesh);
+    // Torso pivots at the hip so leaning and the breathing bob move the upper
+    // body, not the legs.
+    this.torso.position.set(0, L.hipY, 0);
+    this.torso.add(this.mesh(this.geo.torso));
     this.group.add(this.torso);
 
-    // Head + sun hat, baked together, fixed relative to the group.
-    const headGeo = bake([
-      box(0.32, 0.34, 0.32, SKIN, 0, 0, 0),
-      box(0.46, 0.05, 0.46, HAT, 0, 0.21, 0),     // brim
-      box(0.30, 0.16, 0.30, HAT, 0, 0.31, 0),     // crown
-      box(0.47, 0.04, 0.06, HAT_BAND, 0, 0.135, 0.235), // band, front face only
-    ]);
-    this.owned.push(headGeo);
-    const headMesh = new THREE.Mesh(headGeo, skinMat);
-    headMesh.position.set(0, HEAD_Y, 0);
-    headMesh.castShadow = true;
-    headMesh.receiveShadow = true;
-    this.group.add(headMesh);
+    this.head = this.mesh(this.geo.head);
+    this.head.position.set(0, L.headY - L.hipY, 0);
+    this.torso.add(this.head);
 
-    // Legs: hip pivot -> leg box hanging down.
-    const legGeo = bake([box(0.26, LEG_LEN, 0.26, SKIN, 0, -LEG_LEN / 2, 0)]);
-    this.owned.push(legGeo);
-    for (const [hip, x] of [[this.hipL, -HIP_X], [this.hipR, HIP_X]] as const) {
-      hip.position.set(x, HIP_Y, 0);
-      const leg = new THREE.Mesh(legGeo, skinMat);
-      leg.castShadow = true;
-      leg.receiveShadow = true;
-      hip.add(leg);
-      this.group.add(hip);
-    }
+    this.legL = this.limb(this.geo.thigh, this.geo.shin, -L.hipHalfX, L.hipY, -L.thighLen, this.group);
+    this.legR = this.limb(this.geo.thigh, this.geo.shin, L.hipHalfX, L.hipY, -L.thighLen, this.group);
 
-    // Arms: shoulder pivot -> arm box hanging down.
-    const armGeo = bake([box(0.20, ARM_LEN, 0.20, SHIRT, 0, -ARM_LEN / 2, 0)]);
-    this.owned.push(armGeo);
-    for (const [shoulder, x] of [[this.shoulderL, -SHOULDER_X], [this.shoulderR, SHOULDER_X]] as const) {
-      shoulder.position.set(x, SHOULDER_Y - 0.06, 0);
-      const arm = new THREE.Mesh(armGeo, skinMat);
-      arm.castShadow = true;
-      arm.receiveShadow = true;
-      shoulder.add(arm);
-      this.group.add(shoulder);
-    }
+    // Arms hang off the torso so they follow its lean.
+    const shoulderY = L.shoulderY - L.hipY - 0.03;
+    this.armL = this.limb(this.geo.upperArm, this.geo.forearm, -L.shoulderHalfX, shoulderY, -L.upperArmLen, this.torso);
+    this.armR = this.limb(this.geo.upperArm, this.geo.forearm, L.shoulderHalfX, shoulderY, -L.upperArmLen, this.torso);
+    // Let the arms fall in toward the ribs rather than straight off the deltoid.
+    this.armL.root.rotation.z = 0.10;
+    this.armR.root.rotation.z = -0.10;
   }
 
-  private own<T extends { dispose(): void }>(x: T): T { this.owned.push(x); return x; }
+  private mesh(geo: THREE.BufferGeometry): THREE.Mesh {
+    const m = new THREE.Mesh(geo, this.material);
+    m.castShadow = true;
+    m.receiveShadow = true;
+    return m;
+  }
+
+  /** Two-bone limb: `root` rotates at the top joint, `joint` at the middle. */
+  private limb(
+    upper: THREE.BufferGeometry, lower: THREE.BufferGeometry,
+    x: number, y: number, jointY: number, parent: THREE.Object3D,
+  ): Limb {
+    const root = new THREE.Group();
+    root.position.set(x, y, 0);
+    root.add(this.mesh(upper));
+
+    const joint = new THREE.Group();
+    joint.position.set(0, jointY, 0);
+    joint.add(this.mesh(lower));
+    root.add(joint);
+
+    parent.add(root);
+    return { root, joint };
+  }
 
   update(f: PlayerMeshFrame): void {
-    this.phase += f.dt;
     const moving = f.speed > 0.05;
     const speedFrac = f.runSpeed > 0 ? THREE.MathUtils.clamp(f.speed / f.runSpeed, 0, 1) : 0;
 
     if (moving) {
-      const amp = 0.25 + speedFrac * 0.65;
-      const freq = 3.2 + speedFrac * 4.2; // stride scales with speed
-      const swing = Math.sin(this.phase * freq) * amp;
-      this.hipL.rotation.x = swing;
-      this.hipR.rotation.x = -swing;
-      this.shoulderL.rotation.x = -swing;
-      this.shoulderR.rotation.x = swing;
-      this.torso.scale.set(1, 1, 1);
+      // Stride frequency rises with speed; the 2.2 keeps footfalls roughly in
+      // step with ground speed instead of skating.
+      this.phase += f.dt * (2.2 + speedFrac * 6.5);
+      walkPose(this.phase, speedFrac, this.pose);
     } else {
-      // Idle: limbs settle, torso breathes gently.
-      const k = Math.min(1, f.dt * 8);
-      this.hipL.rotation.x += (0 - this.hipL.rotation.x) * k;
-      this.hipR.rotation.x += (0 - this.hipR.rotation.x) * k;
-      this.shoulderL.rotation.x += (0 - this.shoulderL.rotation.x) * k;
-      this.shoulderR.rotation.x += (0 - this.shoulderR.rotation.x) * k;
-      const breathe = 1 + Math.sin(f.time * 1.6) * 0.02;
-      this.torso.scale.set(1, breathe, 1);
+      idlePose(f.time, this.pose);
     }
+
+    const p = this.pose;
+    this.legL.root.rotation.x = p.hipL;
+    this.legR.root.rotation.x = p.hipR;
+    this.legL.joint.rotation.x = -p.kneeL;
+    this.legR.joint.rotation.x = -p.kneeR;
+
+    this.armL.root.rotation.x = p.shoulderL;
+    this.armR.root.rotation.x = p.shoulderR;
+    this.armL.joint.rotation.x = -p.elbowL;
+    this.armR.joint.rotation.x = -p.elbowR;
+
+    this.torso.rotation.x = p.torsoLean;
+    this.torso.position.y = L.hipY + p.bob;
+    // Counter-rotate the head so the character keeps looking where it walks.
+    this.head.rotation.x = -p.torsoLean * 0.7;
   }
 
   dispose(): void {
-    this.group.removeFromParent();
-    for (const o of this.owned) o.dispose();
-    this.owned.length = 0;
+    this.geo.dispose();
+    this.material.dispose();
   }
 }
