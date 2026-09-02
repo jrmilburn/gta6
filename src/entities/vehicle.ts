@@ -1,9 +1,10 @@
 // Arcade vehicle model (plan section 4). No physics engine: a scalar forward
 // speed plus a lateral slip vector, integrated at the fixed 60 Hz step.
 import * as THREE from 'three';
-import type { AABB, EventName, System, Vec2, VehicleKind, VehicleState } from '../types';
+import type { AABB, EventName, Renderable, System, Vec2, VehicleKind, VehicleState } from '../types';
 import { CFG } from '../config';
 import { SpatialHash } from '../core/spatial';
+import { InputSmoother, shortestAngle } from '../core/smooth';
 import { obbVsAabb } from './collision';
 import { VehicleMesh, pickBodyColor } from './vehicleMesh';
 import { VehicleSmoke } from './vehicleSmoke';
@@ -52,7 +53,7 @@ export interface VehicleOptions {
 
 let nextId = 1;
 
-export class Vehicle implements VehicleState, System {
+export class Vehicle implements VehicleState, System, Renderable {
   readonly id = nextId++;
   readonly kind: VehicleKind;
   readonly pos: Vec2;
@@ -81,6 +82,8 @@ export class Vehicle implements VehicleState, System {
   private nearby: AABB[] = [];
   private lateralAccel = 0;
   private longAccel = 0;
+  /** Previous physics state, for render interpolation (1.1). */
+  private prev = { x: 0, y: 0, z: 0, heading: 0 };
 
   constructor(host: VehicleHost, opts: VehicleOptions = {}) {
     this.host = host;
@@ -93,6 +96,7 @@ export class Vehicle implements VehicleState, System {
     this.group = this.mesh.group;
     this.group.position.set(this.pos.x, 0, this.pos.z);
     this.group.rotation.y = this.heading;
+    this.snapshot();
     host.scene.add(this.group);
     this.smoke = new VehicleSmoke(host.scene);
     if (opts.colliders) this.setColliders(opts.colliders);
@@ -132,19 +136,42 @@ export class Vehicle implements VehicleState, System {
     this.slipVel.x = 0; this.slipVel.z = 0;
     this.health = health;
     this.wrecked = health <= 0;
-    this.syncMesh();
+    this.snapshot();
+    this.writeMesh(this.pos.x, this.y, this.pos.z, this.heading);
+  }
+
+  /** Record the state the next render frame interpolates *from*. */
+  private snapshot(): void {
+    this.prev.x = this.pos.x;
+    this.prev.y = this.y;
+    this.prev.z = this.pos.z;
+    this.prev.heading = this.heading;
   }
 
   update(dt: number): void {
     const prevSpeed = this.speed;
+    this.snapshot();
     this.integrate(dt);
     this.resolveWorld();
     this.resolvePeers();
     this.longAccel = (this.speed - prevSpeed) / dt;
-    this.syncMesh();
 
     const rate = this.wrecked ? 14 : this.health < SMOKE_HEALTH ? 4 + (SMOKE_HEALTH - this.health) * 0.2 : 0;
     this.smoke.update(dt, rate, this.pos.x + this.forwardX * 1.5, 0.95, this.pos.z + this.forwardZ * 1.5, this.wrecked);
+  }
+
+  /**
+   * Mesh transform once per rendered frame, interpolated between the last two
+   * physics states. The cosmetic body motion runs on wall time so the suspension
+   * settles smoothly however many physics steps the frame happened to contain.
+   */
+  renderSync(alpha: number, dt: number): void {
+    this.writeMesh(
+      this.prev.x + (this.pos.x - this.prev.x) * alpha,
+      this.prev.y + (this.y - this.prev.y) * alpha,
+      this.prev.z + (this.pos.z - this.prev.z) * alpha,
+      this.prev.heading + shortestAngle(this.prev.heading, this.heading) * alpha,
+    );
     this.mesh.update({
       dt, time: this.host.time, speed: this.speed, steer: this.steer,
       lateralAccel: this.lateralAccel, longAccel: this.longAccel,
@@ -161,7 +188,11 @@ export class Vehicle implements VehicleState, System {
     const steerIn = wreckedNow ? 0 : THREE.MathUtils.clamp(this.controls.steer, -1, 1);
     const handbrake = wreckedNow ? true : this.controls.handbrake;
 
-    // Steering: authority falls from 1 at rest to 0.35 at top speed.
+    // Steering: authority falls from 1 at rest to 0.35 at top speed. This lerp
+    // is the steering rack, not input shaping -- it applies to AI cars too. The
+    // player's *input* is shaped upstream in PlayerDriver (1.2 / 1.4); doing it
+    // here would put the same lag on the traffic AI's already-continuous
+    // steering output and drive it into the parked cars.
     const falloff = 1 - 0.65 * Math.min(1, Math.abs(this.speed) / t.maxSpeed);
     const targetSteer = steerIn * t.steerMax * falloff;
     this.steer += (targetSteer - this.steer) * Math.min(1, dt * 10);
@@ -285,9 +316,9 @@ export class Vehicle implements VehicleState, System {
     this.host.events.emit('wrecked', { vehicle: this });
   }
 
-  private syncMesh(): void {
-    this.group.position.set(this.pos.x, this.y, this.pos.z);
-    this.group.rotation.y = this.heading;
+  private writeMesh(x: number, y: number, z: number, heading: number): void {
+    this.group.position.set(x, y, z);
+    this.group.rotation.y = heading;
   }
 
   dispose(): void {
@@ -296,8 +327,17 @@ export class Vehicle implements VehicleState, System {
   }
 }
 
-/** Routes keyboard input into one vehicle and drives the engine audio. */
+/**
+ * Routes keyboard input into one vehicle and drives the engine audio.
+ *
+ * This is where raw key state becomes a continuous control signal (1.2 / 1.4):
+ * the throttle ramps in over 0.3 s so pulling away is a squeeze rather than a
+ * switch, and the wheel returns to centre (0.06 s) faster than it turns in
+ * (0.12 s), which is what makes a correction feel crisp and a turn feel weighted.
+ */
 export class PlayerDriver implements System {
+  private readonly smooth = new InputSmoother();
+
   constructor(
     private readonly game: {
       input: { steerAxis: number; throttleAxis: number; isDown(a: 'handbrake'): boolean };
@@ -306,12 +346,20 @@ export class PlayerDriver implements System {
     public vehicle: Vehicle,
   ) {}
 
-  update(_dt: number): void {
+  update(dt: number): void {
     const v = this.vehicle;
     const c = v.controls;
-    c.throttle = v.wrecked ? 0 : this.game.input.throttleAxis;
-    c.steer = v.wrecked ? 0 : this.game.input.steerAxis;
+    const throttle = this.smooth.throttle.step(v.wrecked ? 0 : this.game.input.throttleAxis, dt);
+    const steer = this.smooth.steer.step(v.wrecked ? 0 : this.game.input.steerAxis, dt);
+    c.throttle = throttle;
+    c.steer = steer;
     c.handbrake = !v.wrecked && this.game.input.isDown('handbrake');
-    this.game.audio.engine(v.speedFrac, Math.max(0, c.throttle), !v.wrecked);
+    this.game.audio.engine(v.speedFrac, Math.max(0, throttle), !v.wrecked);
+  }
+
+  /** Drop the ramp state so stepping into a new car does not inherit the old one. */
+  reset(): void {
+    this.smooth.throttle.reset();
+    this.smooth.steer.reset();
   }
 }

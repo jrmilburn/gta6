@@ -2,40 +2,32 @@
 // collides with world colliders and vehicle circles by push-out, takes damage
 // from moving vehicles, and satisfies CameraSubject so the chase camera's rig
 // can drive an on-foot mode too.
+//
+// Movement is acceleration-based (feel pass 1.3): input is smoothed into
+// continuous axes, the velocity chases a target rather than being assigned, and
+// the facing turns at a capped rate. Nothing here writes a mesh -- renderSync()
+// does that once per rendered frame from the interpolated state.
 import type { Scene } from 'three';
-import type { AABB, EventName, System, Vec2 } from '../types';
+import type { AABB, EventName, Renderable, System, Vec2 } from '../types';
 import { CFG } from '../config';
 import { SpatialHash } from '../core/spatial';
+import { InputSmoother, shortestAngle, smoothDamp, smoothDampAngle } from '../core/smooth';
 import { PlayerMesh } from './playerMesh';
+import { Legs } from './playerJump';
 import { registerCameraMode, type CameraFrame, type CameraModeName, type CameraSubject } from '../camera/cameras';
 
 const RADIUS = 0.4;
-const JUMP_HEIGHT = 1.2;
-const GRAVITY = 22;
-const JUMP_SPEED = Math.sqrt(2 * GRAVITY * JUMP_HEIGHT);
-/** How fast the camera-follow heading catches up to the character's facing. */
-const TURN_LAG = 6;
 const QUERY_RADIUS = 12;
 /** Player-vs-vehicle push/hit radius: player capsule radius + roughly a car's half-width. */
 const HIT_RADIUS = 1.7;
 const HIT_SPEED_MIN = 1.5;
 const HIT_COOLDOWN = 1;
 
-// DECISION: cityGen's colliders are flat 2D AABBs with no per-point ground
-// height (plan section 1.3's AABB carries no height field), so there is no
-// vertical data to "step up" over — the sidewalk kerb the plan describes has
-// nothing to collide with vertically in this data model. Ground height is
-// treated as a flat 0 everywhere; only XZ push-out collision applies.
+const F = CFG.feel.foot;
+const TURN_RATE = (F.turnRateDeg * Math.PI) / 180;
 
 function clamp(v: number, lo: number, hi: number): number {
   return v < lo ? lo : v > hi ? hi : v;
-}
-
-function shortestAngleDiff(a: number, b: number): number {
-  let d = (b - a) % (Math.PI * 2);
-  if (d > Math.PI) d -= Math.PI * 2;
-  if (d < -Math.PI) d += Math.PI * 2;
-  return d;
 }
 
 interface CircleHit { nx: number; nz: number; depth: number }
@@ -103,9 +95,11 @@ export interface PlayerHost {
 export interface PlayerOptions {
   pos?: Vec2;
   colliders?: readonly AABB[];
+  /** Walkable surface height at a point (kerbs, boardwalk). Flat 0 if absent. */
+  groundHeightAt?: (x: number, z: number) => number;
 }
 
-export class Player implements System, CameraSubject {
+export class Player implements System, Renderable, CameraSubject {
   readonly pos: Vec2;
   y = 0;
   heading = 0;
@@ -116,30 +110,51 @@ export class Player implements System, CameraSubject {
   health = CFG.player.health;
   /** False while driving; toggled by whoever wires up enter/exit (session.ts / dev scene). */
   onFoot = true;
-  onGround = true;
+  /** 0 while the character is fully solid, 1 while faded out for a car entry (1.4). */
+  fade = 0;
 
   readonly mesh = new PlayerMesh();
+  readonly legs = new Legs();
 
   private readonly host: PlayerHost;
-  private yVel = 0;
+  private readonly smooth = new InputSmoother();
+  /** World-space ground velocity; the thing acceleration acts on. */
+  private velX = 0;
+  private velZ = 0;
+  private turnVel = [0];
+  private camTurnVel = [0];
+  private groundVel = [0];
+  private groundY = 0;
   private hash = new SpatialHash<AABB>(20);
   private nearby: AABB[] = [];
   private vehicles: readonly VehicleLike[] = [];
   private respawnPoint: Vec2;
   private invulnUntil = 0;
+  private groundHeightAt: (x: number, z: number) => number;
+  /** Previous physics state, for render interpolation (1.1). */
+  private prev = { x: 0, y: 0, z: 0, heading: 0 };
 
   constructor(host: PlayerHost, opts: PlayerOptions = {}) {
     this.host = host;
     this.pos = { x: opts.pos?.x ?? 0, z: opts.pos?.z ?? 0 };
     this.respawnPoint = { ...this.pos };
+    this.groundHeightAt = opts.groundHeightAt ?? (() => 0);
+    this.groundY = this.groundHeightAt(this.pos.x, this.pos.z);
+    this.y = this.groundY;
     host.scene.add(this.mesh.group);
     if (opts.colliders) this.setColliders(opts.colliders);
-    this.syncMesh();
+    this.snapshot();
+    this.writeMesh(this.pos.x, this.y, this.pos.z, this.heading);
   }
 
   setColliders(colliders: readonly AABB[]): void {
     this.hash = new SpatialHash<AABB>(20);
     for (const c of colliders) this.hash.insertAABB(c, c);
+  }
+
+  setGroundSampler(fn: (x: number, z: number) => number): void {
+    this.groundHeightAt = fn;
+    this.groundY = fn(this.pos.x, this.pos.z);
   }
 
   /** Vehicles to push out of and take damage from. Reassignable (phase 4 can point it at a shared list). */
@@ -151,71 +166,112 @@ export class Player implements System, CameraSubject {
     this.invulnUntil = Math.max(this.invulnUntil, this.host.time + seconds);
   }
 
+  get onGround(): boolean { return this.legs.grounded; }
+
   update(dt: number): void {
-    this.mesh.group.visible = this.onFoot;
     if (!this.onFoot) return;
+    this.snapshot();
 
     this.applyMovement(dt);
-    this.applyVertical(dt);
+    this.legs.step(dt, this.host.input.justPressed('handbrake'));
     this.resolveWorldCollisions();
     this.resolveVehicleCollisions();
     this.checkVehicleHits();
+    this.settleGround(dt);
 
+    this.speed = Math.hypot(this.velX, this.velZ);
     this.speedFrac = CFG.player.runSpeed > 0 ? clamp(this.speed / CFG.player.runSpeed, 0, 1) : 0;
-    this.mesh.update({ dt, time: this.host.time, speed: this.speed, runSpeed: CFG.player.runSpeed });
-    this.syncMesh();
+  }
+
+  /** Record the state the next render frame interpolates *from*. */
+  private snapshot(): void {
+    this.prev.x = this.pos.x;
+    this.prev.y = this.y;
+    this.prev.z = this.pos.z;
+    this.prev.heading = this.heading;
   }
 
   private applyMovement(dt: number): void {
     const input = this.host.input;
-    const ix = (input.isDown('right') ? 1 : 0) - (input.isDown('left') ? 1 : 0);
-    const iz = (input.isDown('forward') ? 1 : 0) - (input.isDown('back') ? 1 : 0);
-    const mag = Math.hypot(ix, iz);
+    const rawX = (input.isDown('right') ? 1 : 0) - (input.isDown('left') ? 1 : 0);
+    const rawZ = (input.isDown('forward') ? 1 : 0) - (input.isDown('back') ? 1 : 0);
+    // Smoothed axes (1.2): a tap ramps in over `attack`, a release falls over
+    // `release`, so nothing in the chain below ever sees a step function.
+    const ix = this.smooth.moveX.step(rawX, dt);
+    const iz = this.smooth.moveZ.step(rawZ, dt);
+    const len = Math.hypot(ix, iz);
+    const mag = Math.min(1, len);
 
-    if (mag > 0.001) {
-      const nx = ix / mag, nz = iz / mag;
-      // Camera-relative: transform the input by the lagged camera-follow
-      // heading (not the character's own, instantly-snapped facing) so
-      // "forward" always means "away from the camera" (plan section 5).
+    let targetX = 0, targetZ = 0;
+    if (len > 0.001) {
+      const nx = ix / len, nz = iz / len;
+      // Camera-relative: transform the input by the lagged camera-follow heading
+      // (not the character's own facing) so "forward" always means "away from
+      // the camera" (plan section 5).
       const basis = this.velocityHeading;
       const fx = Math.sin(basis), fz = Math.cos(basis);
-      // Screen-right is cross(cameraForward, worldUp) = (-Fz, Fx). The previous
-      // (cos, -sin) was this negated, which swapped A and D on screen.
+      // Screen-right is cross(cameraForward, worldUp) = (-Fz, Fx).
       const rx = -Math.cos(basis), rz = Math.sin(basis);
       const dirX = fx * nz + rx * nx;
       const dirZ = fz * nz + rz * nx;
       const dirLen = Math.hypot(dirX, dirZ) || 1;
-      const ux = dirX / dirLen, uz = dirZ / dirLen;
+      const want = (input.isDown('sprint') ? CFG.player.runSpeed : CFG.player.walkSpeed) * mag;
+      targetX = (dirX / dirLen) * want;
+      targetZ = (dirZ / dirLen) * want;
+    }
 
-      this.speed = input.isDown('sprint') ? CFG.player.runSpeed : CFG.player.walkSpeed;
-      this.pos.x += ux * this.speed * dt;
-      this.pos.z += uz * this.speed * dt;
-      this.heading = Math.atan2(ux, uz);
+    // Acceleration, not assignment: ~0.25 s to full speed, ~0.2 s to a stop.
+    const moving = targetX !== 0 || targetZ !== 0;
+    const rate = this.legs.grounded ? (moving ? F.accel : F.decel) : F.airAccel;
+    const k = Math.min(1, rate * dt);
+    this.velX += (targetX - this.velX) * k;
+    this.velZ += (targetZ - this.velZ) * k;
 
-      // The camera yaw is the basis this movement was just derived from, so
-      // letting it chase the resulting heading is a feedback loop: holding A
-      // would swing the camera left, which swings "left" further left, and the
-      // character circles instead of strafing. Only the forward component of
-      // the input is allowed to steer the camera. Pure strafe or reverse (nz
-      // <= 0) leaves it parked, so A and D read as clean sidesteps.
-      const follow = Math.max(0, nz);
-      const diff = shortestAngleDiff(this.velocityHeading, this.heading);
-      this.velocityHeading += diff * Math.min(1, dt * TURN_LAG * follow);
-    } else {
-      this.speed = 0;
+    this.pos.x += this.velX * dt;
+    this.pos.z += this.velZ * dt;
+
+    this.turnToward(dt, targetZ !== 0 || targetX !== 0 ? Math.max(0, iz) : 0);
+  }
+
+  /**
+   * Face the direction of travel at a capped rate rather than snapping to it.
+   * Below `facingMinSpeed` the last facing is held, so releasing the stick does
+   * not spin the character on the spot as the residual velocity decays.
+   */
+  private turnToward(dt: number, forwardInput: number): void {
+    const speed = Math.hypot(this.velX, this.velZ);
+    if (speed > F.facingMinSpeed) {
+      const want = Math.atan2(this.velX, this.velZ);
+      this.heading = smoothDampAngle(this.heading, want, this.turnVel, F.turnSmooth, dt, TURN_RATE);
+    }
+    // The camera yaw is the basis the movement above was derived from, so
+    // letting it chase the resulting heading is a feedback loop: holding A would
+    // swing the camera left, which swings "left" further left, and the character
+    // circles instead of strafing. Only the forward component of the input is
+    // allowed to steer the camera.
+    if (forwardInput > 0.01) {
+      const target = this.velocityHeading + shortestAngle(this.velocityHeading, this.heading) * forwardInput;
+      this.velocityHeading = smoothDampAngle(
+        this.velocityHeading, target, this.camTurnVel, F.cameraTurnSmooth, dt, TURN_RATE,
+      );
     }
   }
 
-  private applyVertical(dt: number): void {
-    if (this.onGround && this.host.input.justPressed('handbrake')) {
-      this.yVel = JUMP_SPEED;
-      this.onGround = false;
+  /**
+   * Blend the feet onto whatever surface they are over. Stepping from road to
+   * sidewalk is a 0.15 m jump in ground height; snapping it makes the camera
+   * hiccup every kerb, so it is smoothed over `stepUpTime` (1.3).
+   */
+  private settleGround(dt: number): void {
+    const want = this.groundHeightAt(this.pos.x, this.pos.z);
+    if (this.legs.grounded) {
+      this.groundY = smoothDamp(this.groundY, want, this.groundVel, F.stepUpTime, dt);
+    } else {
+      // Mid-air: land on whatever is under the feet now, no blending.
+      this.groundY = want;
+      this.groundVel[0] = 0;
     }
-    if (!this.onGround) {
-      this.yVel -= GRAVITY * dt;
-      this.y += this.yVel * dt;
-      if (this.y <= 0) { this.y = 0; this.yVel = 0; this.onGround = true; }
-    }
+    this.y = this.groundY + this.legs.height;
   }
 
   private resolveWorldCollisions(): void {
@@ -225,6 +281,10 @@ export class Player implements System, CameraSubject {
       if (!hit) continue;
       this.pos.x += hit.nx * hit.depth;
       this.pos.z += hit.nz * hit.depth;
+      // Kill the velocity component going into the wall so the character slides
+      // along it instead of buzzing against it.
+      const vn = this.velX * hit.nx + this.velZ * hit.nz;
+      if (vn < 0) { this.velX -= vn * hit.nx; this.velZ -= vn * hit.nz; }
     }
   }
 
@@ -269,20 +329,63 @@ export class Player implements System, CameraSubject {
   respawn(): void {
     this.pos.x = this.respawnPoint.x;
     this.pos.z = this.respawnPoint.z;
-    this.y = 0;
-    this.yVel = 0;
-    this.onGround = true;
+    this.velX = 0; this.velZ = 0;
+    this.turnVel[0] = 0; this.camTurnVel[0] = 0; this.groundVel[0] = 0;
+    this.smooth.moveX.reset(); this.smooth.moveZ.reset();
+    this.legs.reset();
+    this.groundY = this.groundHeightAt(this.pos.x, this.pos.z);
+    this.y = this.groundY;
     this.health = CFG.player.health;
     this.heading = 0;
     this.velocityHeading = 0;
+    this.speed = 0;
     this.onFoot = true;
     this.invulnUntil = this.host.time + 1;
-    this.syncMesh();
+    this.snapshot();
+    this.writeMesh(this.pos.x, this.y, this.pos.z, this.heading);
   }
 
-  private syncMesh(): void {
-    this.mesh.group.position.set(this.pos.x, this.y, this.pos.z);
-    this.mesh.group.rotation.y = this.heading;
+  /** Teleport without clearing health or the respawn point (stepping out of a car). */
+  placeAt(x: number, z: number, heading: number): void {
+    this.pos.x = x; this.pos.z = z;
+    this.velX = 0; this.velZ = 0;
+    this.turnVel[0] = 0; this.camTurnVel[0] = 0; this.groundVel[0] = 0;
+    this.smooth.moveX.reset(); this.smooth.moveZ.reset();
+    this.legs.reset();
+    this.heading = heading;
+    this.velocityHeading = heading;
+    this.speed = 0;
+    this.groundY = this.groundHeightAt(x, z);
+    this.y = this.groundY;
+    this.snapshot();
+    this.writeMesh(x, this.y, z, heading);
+  }
+
+  renderSync(alpha: number, dt: number): void {
+    this.mesh.group.visible = this.onFoot && this.fade < 0.99;
+    if (!this.onFoot) return;
+    const x = this.prev.x + (this.pos.x - this.prev.x) * alpha;
+    const y = this.prev.y + (this.y - this.prev.y) * alpha;
+    const z = this.prev.z + (this.pos.z - this.prev.z) * alpha;
+    const h = this.prev.heading + shortestAngle(this.prev.heading, this.heading) * alpha;
+    this.mesh.update({
+      dt,
+      time: this.host.time,
+      speed: this.speed,
+      walkSpeed: CFG.player.walkSpeed,
+      runSpeed: CFG.player.runSpeed,
+      turnRate: this.turnVel[0],
+      grounded: this.legs.grounded,
+      crouch: this.legs.crouch,
+      airborne: this.legs.airborne,
+      opacity: 1 - this.fade,
+    });
+    this.writeMesh(x, y, z, h);
+  }
+
+  private writeMesh(x: number, y: number, z: number, heading: number): void {
+    this.mesh.group.position.set(x, y, z);
+    this.mesh.group.rotation.y = heading;
   }
 }
 
@@ -298,7 +401,6 @@ export const FOOT_CAMERA = 'foot' as unknown as CameraModeName;
 const FOOT_DIST = 4;
 const FOOT_HEIGHT = 2;
 const FOOT_LOOK_AHEAD = 1.4;
-const FOOT_LAG = 6;
 
 registerCameraMode(FOOT_CAMERA, (s: CameraSubject, f: CameraFrame) => {
   // Third-person over-shoulder: eye trails the lagged camera-follow heading,
@@ -309,5 +411,6 @@ registerCameraMode(FOOT_CAMERA, (s: CameraSubject, f: CameraFrame) => {
   const bx = Math.sin(s.heading), bz = Math.cos(s.heading);
   f.look.set(s.pos.x + bx * FOOT_LOOK_AHEAD, s.y + 1.5, s.pos.z + bz * FOOT_LOOK_AHEAD);
   f.fov = CFG.camera.fovBase;
-  f.lag = FOOT_LAG;
+  f.posSmooth = CFG.feel.camera.footPos;
+  f.lookSmooth = CFG.feel.camera.footLook;
 });

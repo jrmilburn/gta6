@@ -189,43 +189,86 @@ export interface Pose {
   elbowL: number; elbowR: number;
   torsoLean: number;
   bob: number;
+  /** Sideways pelvis drop on the stance leg, metres. */
+  hipDrop: number;
+  /** Pelvis twist about Y; the chest counter-rotates by the same amount. */
+  pelvisTwist: number;
+}
+
+export function emptyPose(): Pose {
+  return {
+    hipL: 0, hipR: 0, kneeL: 0, kneeR: 0, shoulderL: 0, shoulderR: 0,
+    elbowL: 0, elbowR: 0, torsoLean: 0, bob: 0, hipDrop: 0, pelvisTwist: 0,
+  };
+}
+
+const KEYS: Array<keyof Pose> = [
+  'hipL', 'hipR', 'kneeL', 'kneeR', 'shoulderL', 'shoulderR',
+  'elbowL', 'elbowR', 'torsoLean', 'bob', 'hipDrop', 'pelvisTwist',
+];
+
+export function zeroPose(out: Pose): Pose {
+  for (const k of KEYS) out[k] = 0;
+  return out;
+}
+
+/** Weighted accumulate, so several clips can be crossfaded into one pose. */
+export function addPose(out: Pose, src: Pose, w: number): void {
+  if (w === 0) return;
+  for (const k of KEYS) out[k] += src[k] * w;
 }
 
 /**
- * Walk/run cycle. `speedFrac` 0..1 blends stride length and lean, so the same
- * curve reads as a stroll or a run. Knees only bend backwards and elbows only
- * forwards, which is what stops it looking like a puppet.
+ * One gait clip. `amp` is the hip swing amplitude in radians, which is what ties
+ * the pose to a stride length: foot travel per step is about
+ * 2 * (thigh + shin) * sin(amp).
+ *
+ * Knees only bend backwards and elbows only forwards, which is what stops it
+ * looking like a puppet. The pelvis twists and the chest counter-rotates, the
+ * hips drop onto the stance leg, and the head bobs at double stride frequency --
+ * the four things that read as "a person walking" rather than "legs swinging".
  */
-export function walkPose(phase: number, speedFrac: number, out: Pose): Pose {
+function gait(phase: number, amp: number, lean: number, out: Pose): Pose {
   const s = Math.sin(phase);
   const c = Math.cos(phase);
-  const amp = 0.35 + speedFrac * 0.5;
+  const drive = amp / 0.85; // 0 at a stroll, 1 at a sprint
 
   out.hipL = s * amp;
   out.hipR = -s * amp;
-  out.kneeL = Math.max(0, -c * 0.5 - 0.1) * (0.6 + speedFrac) + 0.06;
-  out.kneeR = Math.max(0, c * 0.5 - 0.1) * (0.6 + speedFrac) + 0.06;
+  out.kneeL = Math.max(0, -c * 0.5 - 0.1) * (0.6 + drive) + 0.06;
+  out.kneeR = Math.max(0, c * 0.5 - 0.1) * (0.6 + drive) + 0.06;
   out.shoulderL = -s * amp * 0.75;
   out.shoulderR = s * amp * 0.75;
-  out.elbowL = 0.25 + Math.max(0, s) * 0.5 * speedFrac;
-  out.elbowR = 0.25 + Math.max(0, -s) * 0.5 * speedFrac;
-  out.torsoLean = speedFrac * 0.16;
-  out.bob = Math.abs(Math.cos(phase)) * 0.02 * (0.4 + speedFrac);
+  out.elbowL = 0.25 + Math.max(0, s) * 0.5 * drive;
+  out.elbowR = 0.25 + Math.max(0, -s) * 0.5 * drive;
+  out.torsoLean = lean;
+  // Head bob runs at 2x stride frequency: one dip per footfall, not per cycle.
+  out.bob = -Math.abs(Math.cos(phase)) * 0.015 * (0.5 + drive) + 0.015;
+  out.hipDrop = -s * 0.02;
+  out.pelvisTwist = -s * 0.087; // ~5 degrees
   return out;
+}
+
+/** Walking clip: 2.0 m of ground per cycle at CFG.feel.foot.walkStride. */
+export function walkPose(phase: number, out: Pose): Pose {
+  return gait(phase, 0.6, 0.06, out);
+}
+
+/** Running clip: longer stride, more forward lean, tighter elbows. */
+export function runPose(phase: number, out: Pose): Pose {
+  const p = gait(phase, 0.92, 0.2, out);
+  p.elbowL = 0.85 + Math.max(0, Math.sin(phase)) * 0.45;
+  p.elbowR = 0.85 + Math.max(0, -Math.sin(phase)) * 0.45;
+  return p;
 }
 
 /** Relaxed standing pose with a slow breathing bob. */
 export function idlePose(t: number, out: Pose): Pose {
+  zeroPose(out);
   const b = Math.sin(t * 1.6);
-  out.hipL = 0; out.hipR = 0;
   out.kneeL = 0.04; out.kneeR = 0.04;
   out.shoulderL = 0.06; out.shoulderR = 0.06;
   out.elbowL = 0.18; out.elbowR = 0.18;
-  out.torsoLean = 0;
   out.bob = b * 0.006;
   return out;
-}
-
-export function emptyPose(): Pose {
-  return { hipL: 0, hipR: 0, kneeL: 0, kneeR: 0, shoulderL: 0, shoulderR: 0, elbowL: 0, elbowR: 0, torsoLean: 0, bob: 0 };
 }

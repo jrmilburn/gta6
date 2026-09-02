@@ -17,9 +17,12 @@ import { PedestrianSystem } from '../entities/pedestrians';
 import { CameraRig, cameraModeNames, type CameraModeName } from '../camera/cameras';
 import { createUi, type Ui } from '../ui/index';
 import { CFG } from '../config';
+import { makeGroundSampler } from '../world/groundHeight';
 import type { AABB, VehicleKind } from '../types';
 
 const KINDS: VehicleKind[] = ['sedan', 'sports', 'pickup'];
+/** Seconds the character takes to dissolve at a car door (feel pass 1.4). */
+const DOOR_FADE = 0.2;
 
 export interface Session {
   ui: Ui;
@@ -103,7 +106,14 @@ export function createSession(game: Game): Session {
     game.scene.add(v.group);
   }
 
-  const player = new Player(game, { pos: city.spawns.player, colliders: city.colliders });
+  const player = new Player(game, {
+    pos: city.spawns.player,
+    colliders: city.colliders,
+    // Kerbs are real: the block slabs sit 0.15 m above the road, and the
+    // boardwalk higher still. The player blends onto them (1.3) rather than
+    // walking through the side of every sidewalk.
+    groundHeightAt: makeGroundSampler(city),
+  });
   player.setRespawnPoint(stationSpot);
 
   // The vehicle currently occupied by the player, or null while on foot.
@@ -146,11 +156,28 @@ export function createSession(game: Game): Session {
   for (const v of traffic.cars) game.add(v);
   game.add(traffic);
   game.add(peds);
-  game.add(rig);
+
+  // Render pass (1.1): meshes are written once per *rendered* frame from the
+  // interpolated physics state, and the camera reads those, so it must come
+  // last. Nothing below writes simulation state.
+  game.addRenderable(player);
+  for (const v of allVehicles) game.addRenderable(v);
+  game.addRenderable(rig);
   game.add({ update: () => { if (game.input.justPressed('camera')) rig.cycle(); } });
 
   // Enter/exit (plan section 5): E toggles between walking and driving the
   // nearest unoccupied, non-wrecked car within CFG.player.enterRadius.
+  //
+  // `doorFade` is +1 while the character is dissolving into a car and -1 while
+  // they are resolving back out of one; the 0.2 s ramp runs on wall time.
+  let doorFade = 0;
+  game.addRenderable({
+    renderSync: (_alpha, dt) => {
+      if (doorFade === 0) return;
+      player.fade = Math.max(0, Math.min(1, player.fade + doorFade * dt / DOOR_FADE));
+      if (player.fade === 0 || player.fade === 1) doorFade = 0;
+    },
+  });
   game.add({
     update: () => {
       if (!game.input.justPressed('interact')) return;
@@ -160,24 +187,25 @@ export function createSession(game: Game): Session {
         target.occupied = true;
         current = target;
         driver.vehicle = target;
+        driver.reset();
+        // Fade the character out at the door rather than deleting them on the
+        // frame E is pressed (1.4); the camera blends across at the same time.
+        doorFade = 1;
         player.onFoot = false;
-        rig.setSubject(target);
-        rig.setMode('chase');
+        rig.blendToSubject(target, 'chase');
         game.events.emit('enteredVehicle', { vehicle: target });
       } else if (current) {
         const v = current;
         v.occupied = false;
         releaseControls(v); // let it decelerate naturally, no more driver input
         const exit = exitPointFor(v);
-        player.pos.x = exit.x;
-        player.pos.z = exit.z;
-        player.heading = v.heading;
-        player.velocityHeading = v.heading;
+        player.placeAt(exit.x, exit.z, v.heading);
         player.onFoot = true;
+        player.fade = 1;
+        doorFade = -1;
         player.grantInvuln(1); // don't get clipped by the car you just left
         current = null;
-        rig.setSubject(player);
-        rig.setMode(FOOT_CAMERA);
+        rig.blendToSubject(player, FOOT_CAMERA);
         game.events.emit('exitedVehicle', { vehicle: v });
       }
     },
@@ -195,6 +223,8 @@ export function createSession(game: Game): Session {
         current = null;
       }
       player.respawn();
+      player.fade = 0;
+      doorFade = 0;
       rig.setSubject(player);
       rig.setMode(FOOT_CAMERA);
       spareCar.reset(spareSpawn.x, spareSpawn.z, headingAt(city, spareSpawn.x, spareSpawn.z));

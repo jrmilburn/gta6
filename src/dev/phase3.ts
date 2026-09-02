@@ -84,7 +84,9 @@ export function setup(game: Game): void {
   game.add(player);
   game.add({ update: (dt) => { if (driving) driver.update(dt); } });
   game.add(vehicle);
-  game.add(rig);
+  game.addRenderable(player);
+  game.addRenderable(vehicle);
+  game.addRenderable(rig);
 
   // DECISION: Game.step() can run several fixed physics ticks inside one
   // rendered frame when catching up, but Input clears `pressed` only once per

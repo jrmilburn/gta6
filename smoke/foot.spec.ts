@@ -18,7 +18,7 @@ declare global {
   interface Window {
     __session: SessionProbe;
     __input: { set(code: string, down: boolean): void; tap(code: string): void };
-    __game: { ready: boolean; fps: number; calls: number };
+    __game: { ready: boolean; fps: number; calls: number; game: { time: number } };
   }
 }
 
@@ -27,6 +27,29 @@ async function shoot(page: Page, name: string): Promise<void> {
   const file = path.join(SCREENS, `foot-${name}-${new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)}.png`);
   await page.screenshot({ path: file });
   console.log(`screenshot: ${file}`);
+}
+
+/**
+ * Wait until the fixed-step simulation has advanced `seconds`.
+ *
+ * Wall-clock waits are not a proxy for simulated time: the loop clamps how much
+ * wall time one frame may simulate (CFG.feel.loop.maxFrame), so on a slow
+ * software renderer the world advances slower than the clock. Assertions about
+ * how far the player moved have to be phrased in simulated seconds.
+ */
+async function advanceSim(page: Page, seconds: number): Promise<void> {
+  await page.waitForFunction(
+    (s) => {
+      const w = window as unknown as { __t0?: number };
+      const now = window.__game.game.time;
+      if (w.__t0 === undefined) w.__t0 = now;
+      if (now - w.__t0 < (s as number)) return false;
+      w.__t0 = undefined;
+      return true;
+    },
+    seconds,
+    { timeout: 30_000, polling: 50 },
+  );
 }
 
 const setKey = (page: Page, code: string, down: boolean) =>
@@ -46,15 +69,17 @@ function state(page: Page) {
   });
 }
 
-function nearestVehicle(page: Page) {
+/** Index into __session.vehicles of the parked car nearest the player. */
+function nearestVehicleIndex(page: Page): Promise<number> {
   return page.evaluate(() => {
     const s = window.__session;
-    let best = s.vehicles[0], bestD = Infinity;
-    for (const v of s.vehicles) {
+    let bestI = 0, bestD = Infinity;
+    for (let i = 0; i < s.vehicles.length; i++) {
+      const v = s.vehicles[i];
       const d = Math.hypot(v.pos.x - s.player.pos.x, v.pos.z - s.player.pos.z);
-      if (d < bestD) { bestD = d; best = v; }
+      if (d < bestD) { bestD = d; bestI = i; }
     }
-    return { x: best.pos.x, z: best.pos.z };
+    return bestI;
   });
 }
 
@@ -64,14 +89,24 @@ function nearestVehicle(page: Page) {
  * camera-relative, plan section 5) since there is no direct "walk to" API.
  * Reads state and sets keys in one round trip per tick to keep this fast.
  */
-async function walkToward(page: Page, target: Vec2, stopDist: number, maxMs: number): Promise<Vec2> {
-  await setKey(page, 'ShiftLeft', true); // run
+async function walkToward(page: Page, carIndex: number, stopDist: number, maxMs: number): Promise<number> {
   const t0 = Date.now();
-  let last: Vec2 = target;
+  let dist = Infinity;
   for (;;) {
-    last = await page.evaluate(([tx, tz]) => {
+    // Aim at the car's LIVE position and (when close enough) release, in ONE
+    // round trip. The player now carries momentum, so releasing across five
+    // sequential evaluates lets them sprint metres past the car with the keys
+    // still down; and traffic can nudge a parked car while we walk to it.
+    const r = await page.evaluate(([idx, stop]) => {
       const s = window.__session;
-      const dx = (tx as number) - s.player.pos.x, dz = (tz as number) - s.player.pos.z;
+      const car = s.vehicles[idx as number].pos;
+      const dx = car.x - s.player.pos.x, dz = car.z - s.player.pos.z;
+      const d = Math.hypot(dx, dz);
+      const keys = window.__input;
+      if (d <= (stop as number)) {
+        for (const c of ['KeyW', 'KeyS', 'KeyA', 'KeyD', 'ShiftLeft']) keys.set(c, false);
+        return { d, arrived: true };
+      }
       const worldAngle = Math.atan2(dx, dz);
       let local = worldAngle - s.player.velocityHeading;
       local = Math.atan2(Math.sin(local), Math.cos(local)); // wrap to [-PI, PI]
@@ -79,18 +114,27 @@ async function walkToward(page: Page, target: Vec2, stopDist: number, maxMs: num
       // heading than the player sits to the screen-left. Hence the negation:
       // positive `local` means press A, not D.
       const ix = -Math.sin(local), iz = Math.cos(local);
-      window.__input.set('KeyW', iz > 0.3);
-      window.__input.set('KeyS', iz < -0.3);
-      window.__input.set('KeyD', ix > 0.3);
-      window.__input.set('KeyA', ix < -0.3);
-      return { x: s.player.pos.x, z: s.player.pos.z };
-    }, [target.x, target.z] as const);
-    const dist = Math.hypot(target.x - last.x, target.z - last.z);
-    if (dist <= stopDist || Date.now() - t0 > maxMs) break;
-    await page.waitForTimeout(100);
+      // Walk, don't sprint, for the last stretch: 8 m/s of momentum overshoots
+      // the enter radius before the keys can come back up.
+      keys.set('ShiftLeft', d > 12);
+      keys.set('KeyW', iz > 0.3);
+      keys.set('KeyS', iz < -0.3);
+      keys.set('KeyD', ix > 0.3);
+      keys.set('KeyA', ix < -0.3);
+      return { d, arrived: false };
+    }, [carIndex, stopDist] as const);
+    dist = r.d;
+    if (r.arrived || Date.now() - t0 > maxMs) break;
+    await page.waitForTimeout(60);
   }
   await releaseAll(page);
-  return last;
+  // Let the deceleration ramp finish before anything reads the position.
+  await advanceSim(page, 0.3);
+  return page.evaluate((idx) => {
+    const s = window.__session;
+    const car = s.vehicles[idx as number].pos;
+    return Math.hypot(car.x - s.player.pos.x, car.z - s.player.pos.z);
+  }, carIndex);
 }
 
 test('walks on foot, enters a car, drives it, and exits beside it', async ({ page }) => {
@@ -108,7 +152,7 @@ test('walks on foot, enters a car, drives it, and exits beside it', async ({ pag
   await shoot(page, 'spawn');
 
   await setKey(page, 'KeyW', true);
-  await page.waitForTimeout(1200);
+  await advanceSim(page, 1.2);
   await setKey(page, 'KeyW', false);
   const walked = await state(page);
   const walkedDist = Math.hypot(walked.px - start.px, walked.pz - start.pz);
@@ -117,19 +161,19 @@ test('walks on foot, enters a car, drives it, and exits beside it', async ({ pag
   await shoot(page, 'walking');
 
   // --- 2. walk to the nearest parked car and enter it ----------------------
-  const target = await nearestVehicle(page);
+  const carIndex = await nearestVehicleIndex(page);
   // The generated city can place the nearest car well over a hundred metres
   // from the boardwalk spawn; teleport to a clear approach 6 m out so this
   // spec stays fast and isn't a fragile cross-city obstacle walk. The final
   // steps into enter range, and the enter/drive/exit sequence, are all real
   // window.__input-driven simulation.
-  await page.evaluate((t) => {
-    const p = window.__session.player.pos;
-    p.x = t.x - 6;
-    p.z = t.z;
-  }, target);
-  const nearCar = await walkToward(page, target, 3.0, 15_000);
-  const distToCar = Math.hypot(target.x - nearCar.x, target.z - nearCar.z);
+  await page.evaluate((idx) => {
+    const s = window.__session;
+    const car = s.vehicles[idx as number].pos;
+    s.player.pos.x = car.x - 6;
+    s.player.pos.z = car.z;
+  }, carIndex);
+  const distToCar = await walkToward(page, carIndex, 2.6, 15_000);
   console.log(`approach: dist to car = ${distToCar.toFixed(2)} m`);
   expect(distToCar).toBeLessThan(3.5);
 
@@ -147,7 +191,7 @@ test('walks on foot, enters a car, drives it, and exits beside it', async ({ pag
   const beforeDrive = await page.evaluate(() => window.__session.playerVehicle!.pos);
   await setKey(page, 'KeyW', true);
   await page.waitForFunction(() => (window.__session.playerVehicle?.speed ?? 0) > 5, null, { timeout: 15_000 });
-  await page.waitForTimeout(400);
+  await advanceSim(page, 0.4);
   await setKey(page, 'KeyW', false);
   const afterDrive = await page.evaluate(() => window.__session.playerVehicle!.pos);
   const drove = Math.hypot(afterDrive.x - beforeDrive.x, afterDrive.z - beforeDrive.z);
@@ -156,7 +200,7 @@ test('walks on foot, enters a car, drives it, and exits beside it', async ({ pag
   await shoot(page, 'driving');
 
   // --- 4. exit puts the player back on foot beside the car ------------------
-  await page.waitForTimeout(600); // let it coast down before stepping out
+  await advanceSim(page, 0.6); // let it coast down before stepping out
   const carAtExit = await page.evaluate(() => window.__session.playerVehicle!.pos);
   await page.evaluate(() => window.__input.tap('KeyE'));
   await page.waitForFunction(() => window.__session.player.onFoot === true, null, { timeout: 5_000 });

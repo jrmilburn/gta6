@@ -3,6 +3,10 @@
 // ~7 draw calls: body, headlights, tail lights, 4 wheels (+2 for the light bar).
 import * as THREE from 'three';
 import type { VehicleKind } from '../types';
+import { CFG } from '../config';
+import { Spring, smoothNoise } from '../core/smooth';
+
+const V = CFG.feel.vehicle;
 
 /** 10 saturated body colours plus black, white and silver (plan section 4). */
 export const BODY_COLORS: readonly number[] = [
@@ -146,9 +150,17 @@ export class VehicleMesh {
   private readonly tailMat: THREE.MeshStandardMaterial;
   private readonly barMats: THREE.MeshStandardMaterial[] = [];
   private readonly owned: Array<{ dispose(): void }> = [];
-  private roll = 0;
-  private pitch = 0;
+  /**
+   * Cosmetic suspension (1.4): three critically-ish damped springs fed by the
+   * accelerations the physics already computes. Heave is the body squatting and
+   * diving on its springs; pitch and roll are what the driver actually reads as
+   * weight transfer.
+   */
+  private readonly heave = new Spring(V.suspensionStiffness, V.suspensionDamping);
+  private readonly pitchSpring = new Spring(V.suspensionStiffness, V.suspensionDamping);
+  private readonly rollSpring = new Spring(V.suspensionStiffness, V.suspensionDamping);
   private spin = 0;
+  private wobbleClock = 0;
 
   constructor(kind: VehicleKind, bodyColor: number) {
     const spec = specFor(kind, bodyColor);
@@ -229,20 +241,30 @@ export class VehicleMesh {
   private own<T extends { dispose(): void }>(x: T): T { this.owned.push(x); return x; }
 
   update(f: MeshFrame): void {
-    // Damped cosmetic roll and pitch (plan section 4). The raw accelerations are
-    // clamped first: at 25 m/s a hard turn peaks near 70 m/s^2, which would roll
-    // the body 80 degrees. // DECISION: clamp to a believable 1.5 g / 2 g.
+    // The raw accelerations are clamped first: at 25 m/s a hard turn peaks near
+    // 70 m/s^2, which would roll the body 80 degrees.
+    // DECISION: clamp to a believable 1.5 g / 2 g.
     const lat = THREE.MathUtils.clamp(f.lateralAccel, -15, 15);
     const lon = THREE.MathUtils.clamp(f.longAccel, -20, 20);
-    const k = Math.min(1, f.dt * 6);
-    this.roll += (-lat * 0.02 - this.roll) * k;
-    this.pitch += (-lon * 0.01 - this.pitch) * k;
-    this.body.rotation.z = this.roll;
-    this.body.rotation.x = this.pitch;
+    const dt = Math.min(f.dt, 0.05);
+
+    // Springs, not lerps: a lerp toward a target can only ever ease in, so the
+    // body never overshoots and never settles -- which is exactly what makes
+    // arcade cars feel like they are sliding on a plate. These oscillate once
+    // and settle, the way a real body on springs does.
+    this.body.position.y = this.heave.step(-lon * V.heaveScale * V.suspensionStiffness, dt);
+    this.body.rotation.x = this.pitchSpring.step(-lon * V.pitchScale * V.suspensionStiffness, dt);
+    this.body.rotation.z = this.rollSpring.step(-lat * V.rollScale * V.suspensionStiffness, dt);
 
     this.spin += (f.speed * f.dt) / WHEEL_RADIUS;
+    // Each wheel gets its own noise line, so kerbs and rough asphalt make them
+    // patter independently instead of moving as one rigid axle.
+    this.wobbleClock += dt * V.wheelWobbleRate;
+    const rough = Math.min(1, Math.abs(f.speed) / 12);
     for (let i = 0; i < 4; i++) {
       this.spins[i].rotation.x = this.spin;
+      this.yaws[i].position.y = WHEEL_RADIUS
+        + smoothNoise(this.wobbleClock, 10 + i) * V.wheelWobble * rough;
       if (i < 2) this.yaws[i].rotation.y = f.steer;
     }
 

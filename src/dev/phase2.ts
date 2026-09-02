@@ -96,7 +96,8 @@ export function setup(game: Game): void {
   game.add(keys);
   game.add(new PlayerDriver(game, vehicle));
   game.add(vehicle);
-  game.add(rig);
+  game.addRenderable(vehicle);
+  game.addRenderable(rig);
 
   // Test hook for smoke/drive.spec.ts.
   (window as unknown as { __vehicle: unknown }).__vehicle = {

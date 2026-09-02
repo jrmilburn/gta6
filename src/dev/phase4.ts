@@ -55,7 +55,10 @@ export function setup(game: Game): void {
   for (const v of traffic.cars) game.add(v);
   game.add(traffic);
   game.add(peds);
-  game.add(rig);
+  game.addRenderable(player);
+  game.addRenderable(spare);
+  for (const v of traffic.cars) game.addRenderable(v);
+  game.addRenderable(rig);
   game.add({ update: () => { if (game.input.justPressed('camera')) rig.cycle(); } });
 
   game.add({

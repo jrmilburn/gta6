@@ -1,6 +1,6 @@
 // Owns scene, renderer, the fixed-timestep loop and the ordered systems list.
 import * as THREE from 'three';
-import type { System } from '../types';
+import type { Renderable, System } from '../types';
 import { CFG } from '../config';
 import { Input } from './input';
 import { Audio } from './audio';
@@ -8,8 +8,14 @@ import { EventBus } from './events';
 import { param } from './rng';
 import { buildSky, updateSky, type SkyRig, type TimeOfDay } from '../world/sky';
 
-const STEP = 1 / 60;
-const MAX_STEPS = 5;
+const STEP = CFG.feel.loop.step;
+const MAX_STEPS = CFG.feel.loop.maxSteps;
+/**
+ * Hard cap on how much wall time one frame is allowed to simulate. A tab switch
+ * hands back a multi-second delta; without this the world jumps forward on the
+ * first frame back (1.1).
+ */
+const MAX_FRAME = CFG.feel.loop.maxFrame;
 
 const FORWARD = new THREE.Vector3();
 const FOCUS = new THREE.Vector3();
@@ -22,6 +28,13 @@ export class Game {
   readonly audio = new Audio();
   readonly events = new EventBus();
   readonly systems: System[] = [];
+  /**
+   * Objects that write their meshes once per *rendered* frame, interpolating
+   * between the previous and current physics state with `alpha`. Physics runs at
+   * a fixed 60 Hz; writing a mesh straight from physics state inside step() is
+   * what makes movement look stepped on any display that is not exactly 60 Hz.
+   */
+  readonly renderables: Renderable[] = [];
   readonly sky: SkyRig;
   readonly timeOfDay: TimeOfDay;
   /** Interpolation alpha for the current render frame (0..1 between physics steps). */
@@ -64,6 +77,13 @@ export class Game {
 
   add(system: System): void { this.systems.push(system); }
 
+  addRenderable(r: Renderable): void { this.renderables.push(r); }
+
+  removeRenderable(r: Renderable): void {
+    const i = this.renderables.indexOf(r);
+    if (i >= 0) this.renderables.splice(i, 1);
+  }
+
   private onResize(): void {
     this.camera.aspect = window.innerWidth / window.innerHeight;
     this.camera.updateProjectionMatrix();
@@ -74,7 +94,7 @@ export class Game {
     this.last = performance.now();
     const frame = (now: number) => {
       requestAnimationFrame(frame);
-      const wall = Math.min((now - this.last) / 1000, 0.25);
+      const wall = Math.min((now - this.last) / 1000, MAX_FRAME);
       this.last = now;
 
       this.frames++;
@@ -98,7 +118,10 @@ export class Game {
         if (steps === MAX_STEPS) this.accumulator = 0; // Don't spiral after a stall.
       }
 
-      this.alpha = this.accumulator / STEP;
+      this.alpha = this.paused ? 1 : this.accumulator / STEP;
+      // Interpolated render transforms, then anything that reads them (the
+      // camera rig) -- both driven by wall time, not the fixed step.
+      for (const r of this.renderables) r.renderSync(this.alpha, wall);
       // Spend the shadow map on the ground the camera is actually looking at.
       // Centring on the camera itself leaves half a drone shot unshadowed.
       this.camera.getWorldDirection(FORWARD);

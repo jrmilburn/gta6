@@ -49,6 +49,15 @@ export interface VehicleState {
 
 export interface System { update(dt: number): void }
 
+/**
+ * Something that writes its visual transform once per rendered frame.
+ *
+ * `alpha` is the fixed-step accumulator fraction (0..1): 0 means "the previous
+ * physics state", 1 means "the current one". `dt` is the real wall time since
+ * the last rendered frame, for smoothing that must be frame-rate independent.
+ */
+export interface Renderable { renderSync(alpha: number, dt: number): void }
+
 export type EventName =
   | 'pedHit'
   | 'vehicleHit'
