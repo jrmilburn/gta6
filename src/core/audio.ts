@@ -11,6 +11,10 @@ export class Audio {
   private sirenOsc: OscillatorNode | null = null;
   private sirenGain: GainNode | null = null;
   private sirenT = 0;
+  private ambientDelay: DelayNode | null = null;
+  private ambientOn = false;
+  private ambientTimer: number | null = null;
+  private ambientStep = 0;
   enabled = true;
 
   /** Must be called from a user gesture (browser autoplay policy). */
@@ -54,6 +58,17 @@ export class Audio {
     siren.connect(sg).connect(master);
     siren.start();
     this.sirenOsc = siren; this.sirenGain = sg;
+
+    // Ambient loop's shared delay, built once so start/stopAmbient can be cheap.
+    const ambDelay = ctx.createDelay(1);
+    ambDelay.delayTime.value = 0.28;
+    const ambFeedback = ctx.createGain();
+    ambFeedback.gain.value = 0.28;
+    const ambWet = ctx.createGain();
+    ambWet.gain.value = 0.5;
+    ambDelay.connect(ambFeedback).connect(ambDelay);
+    ambDelay.connect(ambWet).connect(master);
+    this.ambientDelay = ambDelay;
   }
 
   /** speedFrac 0..1, throttle 0..1, active=false silences the engine (on foot). */
@@ -77,7 +92,8 @@ export class Audio {
     }
     this.sirenT += dt;
     const two = Math.floor(this.sirenT * 1.5) % 2 === 0;
-    this.sirenOsc.frequency.setTargetAtTime(two ? 700 : 900, t, 0.01);
+    const drift = Math.sin(this.sirenT * 0.6) * 10; // slight pitch drift, plan section 9
+    this.sirenOsc.frequency.setTargetAtTime((two ? 700 : 900) + drift, t, 0.01);
     const g = Math.max(0, 1 - distance / 140) ** 2 * 0.16;
     this.sirenGain.gain.setTargetAtTime(g, t, 0.15);
   }
@@ -114,6 +130,43 @@ export class Audio {
     g.gain.value = Math.min(0.5, impact / 40);
     src.connect(f).connect(g).connect(this.master);
     src.start();
+  }
+
+  /** Optional 4-bar ambient loop (plan 9, "if time allows"): two chords, a slow
+   * arpeggio at 90 bpm, triangle oscillators through a shared delay. Safe to
+   * call repeatedly; a second call while already running is a no-op. */
+  startAmbient(): void {
+    if (!this.ctx || !this.master || !this.ambientDelay || this.ambientOn) return;
+    this.ambientOn = true;
+    this.ambientStep = 0;
+    const stepDur = 60 / 90 / 2; // eighth notes at 90 bpm
+    const chordA = [220.0, 261.63, 329.63, 392.0];   // A minor 7
+    const chordB = [174.61, 220.0, 261.63, 329.63];  // F major 7
+    const playStep = (): void => {
+      if (!this.ambientOn || !this.ctx || !this.master || !this.ambientDelay) return;
+      const bar = Math.floor(this.ambientStep / 8) % 2;
+      const chord = bar === 0 ? chordA : chordB;
+      const note = chord[this.ambientStep % chord.length];
+      const t = this.ctx.currentTime;
+      const o = this.ctx.createOscillator();
+      o.type = 'triangle';
+      o.frequency.value = note;
+      const g = this.ctx.createGain();
+      g.gain.setValueAtTime(0, t);
+      g.gain.linearRampToValueAtTime(0.045, t + 0.03);
+      g.gain.exponentialRampToValueAtTime(0.001, t + stepDur * 0.9);
+      o.connect(g).connect(this.master);
+      o.connect(this.ambientDelay);
+      o.start(t); o.stop(t + stepDur);
+      this.ambientStep = (this.ambientStep + 1) % 32; // 4 bars of 8 eighth-notes
+      this.ambientTimer = window.setTimeout(playStep, stepDur * 1000);
+    };
+    playStep();
+  }
+
+  stopAmbient(): void {
+    this.ambientOn = false;
+    if (this.ambientTimer !== null) { window.clearTimeout(this.ambientTimer); this.ambientTimer = null; }
   }
 
   blip(freq = 880): void {
