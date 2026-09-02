@@ -90,7 +90,6 @@ export function setup(game: Game): void {
   // rendered frame when catching up, but Input clears `pressed` only once per
   // rendered frame, so a short cooldown keeps one E tap from immediately
   // toggling enter/exit back and forth (see session.ts for the same fix).
-  let lastInteract = -Infinity;
   game.add({
     update: () => {
       if (game.input.justPressed('camera')) rig.cycle();
@@ -109,8 +108,7 @@ export function setup(game: Game): void {
         vehicle.reset(carSpawn.x, carSpawn.z, 0);
       }
 
-      if (!game.input.justPressed('interact') || game.time - lastInteract < 0.3) return;
-      lastInteract = game.time;
+      if (!game.input.justPressed('interact')) return;
       if (player.onFoot) {
         const target = findEnterable([vehicle], player.pos, CFG.player.enterRadius);
         if (!target) return;

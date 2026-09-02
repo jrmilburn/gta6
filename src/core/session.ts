@@ -13,12 +13,14 @@ import { buildWater } from '../world/water';
 import { Vehicle, PlayerDriver } from '../entities/vehicle';
 import { Player, findEnterable, exitPointFor, FOOT_CAMERA } from '../entities/player';
 import { CameraRig, cameraModeNames, type CameraModeName } from '../camera/cameras';
+import { createUi, type Ui } from '../ui/index';
 import { CFG } from '../config';
 import type { AABB, VehicleKind } from '../types';
 
 const KINDS: VehicleKind[] = ['sedan', 'sports', 'pickup'];
 
 export interface Session {
+  ui: Ui;
   city: CityLayout;
   vehicles: Vehicle[];
   /** The player's on-foot controller; hidden and inert while driving. */
@@ -118,16 +120,9 @@ export function createSession(game: Game): Session {
 
   // Enter/exit (plan section 5): E toggles between walking and driving the
   // nearest unoccupied, non-wrecked car within CFG.player.enterRadius.
-  // DECISION: Game.step() can run several fixed physics ticks inside one
-  // rendered frame when catching up from a slow frame, but Input clears
-  // `pressed` only once per rendered frame — so a System.update() keyed off
-  // `justPressed` can see the same press several times in a row. A short
-  // cooldown keeps one E tap from toggling enter/exit back and forth.
-  let lastInteract = -Infinity;
   game.add({
     update: () => {
-      if (!game.input.justPressed('interact') || game.time - lastInteract < 0.3) return;
-      lastInteract = game.time;
+      if (!game.input.justPressed('interact')) return;
       if (player.onFoot) {
         const target = findEnterable(vehicles, player.pos, CFG.player.enterRadius);
         if (!target) return;
@@ -175,5 +170,18 @@ export function createSession(game: Game): Session {
     },
   });
 
-  return { city, vehicles, player, driver, rig, get playerVehicle() { return current; } };
+  const session: Session = {
+    city, vehicles, player, driver, rig,
+    get playerVehicle() { return current; },
+    // Assigned below: createUi needs the session it reads state from.
+    ui: null as unknown as Ui,
+  };
+
+  // UI runs last in the system order (plan 1.1), so it renders the state every
+  // other system has already settled this step.
+  session.ui = createUi(game, session);
+  game.add(session.ui);
+  session.ui.showTitle();
+
+  return session;
 }

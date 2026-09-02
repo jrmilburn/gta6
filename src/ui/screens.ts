@@ -35,6 +35,8 @@ export interface ScreensApi {
   active: boolean;
   tick(dt: number): void;
   showTitle(): void;
+  /** True while the boot splash is still up. */
+  readonly titleActive: boolean;
   showWrecked(): void;
   showBusted(): void;
   showMissionPassed(reward?: number): void;
@@ -113,6 +115,7 @@ export function createScreens(uiRoot: HTMLElement, audio: BlipHost): ScreensApi 
   return {
     root,
     get active(): boolean { return titleVisible || pulseKind !== null; },
+    get titleActive(): boolean { return titleVisible; },
     tick(dt: number): void {
       if (pulseKind) {
         pulseT += dt;

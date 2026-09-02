@@ -112,6 +112,10 @@ export function createUi(game: Game, session: Session): Ui {
         hud.setVisible(hudVisible);
       }
       // Driving or on foot, whichever is current -- playerVehicle is null on foot.
+      // The boot splash reads as a title card, not a paused game: keep the
+      // empty HUD out from behind it.
+      hud.setVisible(hudVisible && !screens.titleActive);
+
       const v = session.playerVehicle;
       const speedMs = v ? Math.abs(v.speed) : session.player.speed;
       const healthFrac = (v ? v.health : session.player.health) / 100;

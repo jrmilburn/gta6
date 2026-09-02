@@ -27,6 +27,7 @@ const BINDINGS: Record<Action, string[]> = {
 export class Input {
   private down = new Set<string>();
   private pressed = new Set<string>();
+  private consumed = false;
   /** Set by scripted sequences (showcase) to override the human. */
   scripted: Partial<Record<Action, number>> | null = null;
   readonly mouse = { dx: 0, dy: 0, locked: false };
@@ -88,9 +89,27 @@ export class Input {
     return (this.isDown('forward') ? 1 : 0) - (this.isDown('back') ? 1 : 0);
   }
 
-  /** Called once per frame at the very end of the update order. */
-  endFrame(): void {
+  /**
+   * Called at the end of every fixed physics step.
+   *
+   * Edge-triggered presses must be consumed per STEP, not per rendered frame:
+   * Game.step() can run several ticks inside one frame under load, and a system
+   * gated on justPressed() would otherwise see the same tap two or three times
+   * and toggle a state back and forth on a single keypress.
+   */
+  endStep(): void {
     this.pressed.clear();
+    this.consumed = true;
+  }
+
+  /**
+   * Called once per rendered frame. Only clears presses that no physics step
+   * consumed -- while paused no steps run at all, and without this a tap would
+   * linger and re-fire every frame.
+   */
+  endFrame(): void {
+    if (!this.consumed) this.pressed.clear();
+    this.consumed = false;
     this.mouse.dx = 0;
     this.mouse.dy = 0;
   }

@@ -117,5 +117,6 @@ export class Game {
   private step(dt: number): void {
     this.time += dt;
     for (const s of this.systems) s.update(dt);
+    this.input.endStep();
   }
 }
