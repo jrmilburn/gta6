@@ -9,6 +9,7 @@ import { generateCity, type CityLayout } from '../world/cityGen';
 import { buildGround } from '../world/ground';
 import { buildBuildings } from '../world/buildings';
 import { buildProps } from '../world/props';
+import { buildVegetation } from '../world/vegetation';
 import { buildWater } from '../world/water';
 import { Vehicle, PlayerDriver } from '../entities/vehicle';
 import { Player, findEnterable, exitPointFor, FOOT_CAMERA } from '../entities/player';
@@ -76,9 +77,17 @@ export function createSession(game: Game, assets: Assets, screens?: ScreensApi):
     matchSkyToEnvironment(game.sky, env.sun.dir, env.sun.color, env.sun.horizon, game.timeOfDay);
   }
 
+  // Vegetation first: props.ts drops its procedural palms and park trees when
+  // the real models took, and keeps them when they did not.
+  const vegetation = buildVegetation(city, assets);
+  game.scene.add(vegetation.group);
+  game.addRenderable({
+    renderSync: () => vegetation.update(game.camera.position, game.time),
+  });
+
   game.scene.add(buildGround(city, assets));
   game.scene.add(buildBuildings(city, assets));
-  game.scene.add(buildProps(city, assets));
+  game.scene.add(buildProps(city, assets, vegetation.active));
 
   const water = buildWater(game.sky.sunDir);
   game.scene.add(water.mesh);

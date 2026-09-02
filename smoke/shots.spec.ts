@@ -70,8 +70,10 @@ async function suite(page: Page, query: string, suffix: string): Promise<void> {
   for (const kind of ['palm', 'tree'] as const) {
     const s = await page.evaluate((k) => window.__shots.spot(k as 'palm'), kind);
     if (!s) { console.log(`no ${kind} spot`); continue; }
-    const v = orbit(s.x, s.z, 3.2, Math.PI * 0.25, 5, 1.6);
-    await shoot(page, n(`${kind}-5m`), v.eye, v.target, 50);
+    // 5 m out as the brief asks, but aimed at mid-canopy with a wide lens so
+    // the whole plant is in frame rather than a wall of trunk.
+    const v = orbit(s.x, s.z, 3.2, Math.PI * 0.25, 7, 0.6);
+    await shoot(page, n(`${kind}-5m`), v.eye, v.target, 58);
   }
 
   const dt = await page.evaluate(() => window.__shots.spot('downtown'));

@@ -19,13 +19,25 @@ export const ARMS_UP_ANGLE = -2.5;
 const HIP_X = L.hipHalfX;
 const SHOULDER_X = L.shoulderHalfX;
 
+// Six palettes (realism pass 2.2). Skin tones and hair are drawn from a real
+// range rather than tinted from one base, because a crowd where everyone is the
+// same person in a different shirt reads as a crowd of clones at any distance.
 const VARIANTS: Palette[] = [
   { skin: 0xe3ad7c, hair: 0x2b1d14, shirt: 0x1f8f86, trousers: 0xf4f1e6, shoes: 0xdedbd2 },
   { skin: 0xa5713f, hair: 0x140f0c, shirt: 0xe0479e, trousers: 0x37506e, shoes: 0x2f2f33 },
   { skin: 0xf0c9a0, hair: 0x6b4423, shirt: 0xf5c518, trousers: 0x2a2a2e, shoes: 0xe8e4da },
   { skin: 0x8a5a3c, hair: 0x241a12, shirt: 0x2f7fe0, trousers: 0xf1efe6, shoes: 0x3a3a40 },
+  { skin: 0xc98d63, hair: 0x4a3524, shirt: 0xf26a3d, trousers: 0x8e8b80, shoes: 0x1f1f22 },
+  { skin: 0x6d452c, hair: 0x0f0b09, shirt: 0xeae6db, trousers: 0x2f6b52, shoes: 0xc9c4b8 },
 ];
 export const PED_VARIANT_COUNT = VARIANTS.length;
+
+/**
+ * Three heights (2.2). Applied as a uniform scale on the whole rig, so a short
+ * pedestrian has short legs and a short stride rather than a shrunken adult
+ * floating above the pavement.
+ */
+export const PED_SCALES: readonly number[] = [0.92, 1.0, 1.06];
 
 const M_TMP = new THREE.Matrix4();
 const M_OFF = new THREE.Matrix4();
@@ -68,7 +80,10 @@ export class PedMeshPool {
 
   constructor(capacityPerVariant: number) {
     this.capacityPerVariant = capacityPerVariant;
-    const material = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.75 });
+    // Roughness 0.85 and no map: the palette is flat colour, so the only thing
+    // that can give these forms any shading beyond the key light is the
+    // environment map, and a rough dielectric is what picks that up (2.2).
+    const material = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85 });
     this.owned.push(material);
 
     for (const v of VARIANTS) {

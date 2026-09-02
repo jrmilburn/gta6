@@ -69,7 +69,15 @@ function crownGeo(): THREE.BufferGeometry {
   return mergeGeos(parts);
 }
 
-export function buildProps(layout: CityLayout, _assets: Assets = emptyAssets()): THREE.Group {
+/**
+ * `skipVegetation` is set once world/vegetation.ts has taken over the palms and
+ * park trees with real models; the procedural palm fronds and icosahedron
+ * canopies below stay in the file as the documented fallback (ASSETS.md) and
+ * are still what runs if the nature kit is missing.
+ */
+export function buildProps(
+  layout: CityLayout, _assets: Assets = emptyAssets(), skipVegetation = false,
+): THREE.Group {
   const group = new THREE.Group();
   group.name = 'props';
   const p = layout.props;
@@ -77,9 +85,11 @@ export function buildProps(layout: CityLayout, _assets: Assets = emptyAssets()):
   // --- palms -------------------------------------------------------------------
   const trunkMat = new THREE.MeshStandardMaterial({ color: 0xa98b63, roughness: 0.95 });
   const leafMat = new THREE.MeshStandardMaterial({ color: 0x4f9b46, roughness: 0.8, side: THREE.DoubleSide });
-  const trunk = cylAt(0.17, 0.32, 6.4, 6, 0, 3.2, 0);
-  group.add(place(trunk, trunkMat, p.palms, 0.16, 0.06));
-  group.add(place(crownGeo(), leafMat, p.palms, 6.5, 0.06));
+  if (!skipVegetation) {
+    const trunk = cylAt(0.17, 0.32, 6.4, 6, 0, 3.2, 0);
+    group.add(place(trunk, trunkMat, p.palms, 0.16, 0.06));
+    group.add(place(crownGeo(), leafMat, p.palms, 6.5, 0.06));
+  }
 
   // --- streetlights ------------------------------------------------------------
   const poleMat = new THREE.MeshStandardMaterial({ color: 0x54585e, roughness: 0.55, metalness: 0.5 });
@@ -119,7 +129,7 @@ export function buildProps(layout: CityLayout, _assets: Assets = emptyAssets()):
   }
 
   // --- park trees ---------------------------------------------------------------
-  if (p.trees.length) {
+  if (p.trees.length && !skipVegetation) {
     group.add(place(cylAt(0.22, 0.32, 3, 6, 0, 1.5, 0),
       new THREE.MeshStandardMaterial({ color: 0x8a6a48, roughness: 0.95 }), p.trees, 0.16));
     const foliage = mergeGeos([

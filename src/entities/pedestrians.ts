@@ -8,7 +8,7 @@ import type { EventName, System, Vec2 } from '../types';
 import { CFG } from '../config';
 import { Rng } from '../core/rng';
 import { blockBounds, HALF_X, HALF_Z, PITCH } from '../world/cityGen';
-import { PedMeshPool, PED_VARIANT_COUNT } from './pedMesh';
+import { PedMeshPool, PED_SCALES, PED_VARIANT_COUNT } from './pedMesh';
 
 // DECISION: the OBB half-extents below are duplicated from vehicle.ts (module
 // -private there, and that file is outside this phase's ownership) -- they
@@ -47,6 +47,8 @@ export interface PedHost {
 interface Ped {
   variant: number;
   slot: number;
+  /** Uniform body scale from PED_SCALES; fixed for the pedestrian's lifetime. */
+  scale: number;
   pos: Vec2;
   y: number;
   heading: number;
@@ -123,7 +125,7 @@ function obbContainsPoint(v: PedVehicleLike, px: number, pz: number): boolean {
 
 const M_BASE = new THREE.Matrix4();
 const V_POS = new THREE.Vector3();
-const V_ONE = new THREE.Vector3(1, 1, 1);
+const V_SCALE = new THREE.Vector3(1, 1, 1);
 const Q_YAW = new THREE.Quaternion();
 const Q_TUMBLE = new THREE.Quaternion();
 const AXIS_X = new THREE.Vector3(1, 0, 0);
@@ -162,6 +164,7 @@ export class PedestrianSystem implements System {
     const iz = this.rng.int(0, CFG.city.blocksZ - 1);
     const p: Ped = {
       variant: this.mesh.variantFor(i), slot: this.mesh.slotFor(i),
+      scale: PED_SCALES[this.rng.int(0, PED_SCALES.length - 1)],
       pos: { x: 0, z: 0 }, y: 0, heading: 0, mode: 'wander', speed: 0,
       phase: this.rng.range(0, 10),
       ix, iz, corner: this.rng.int(0, 3), dir: this.rng.chance(0.5) ? 1 : -1, edgeT: this.rng.next(),
@@ -404,7 +407,7 @@ export class PedestrianSystem implements System {
       armsUp = p.mode === 'flee';
     }
 
-    M_BASE.compose(V_POS.set(p.pos.x, p.y, p.pos.z), quat, V_ONE);
+    M_BASE.compose(V_POS.set(p.pos.x, p.y, p.pos.z), quat, V_SCALE.setScalar(p.scale));
     this.mesh.setPose(p.variant, p.slot, M_BASE, legSwing, armSwing, armsUp);
   }
 
