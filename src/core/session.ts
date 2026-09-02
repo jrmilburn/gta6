@@ -12,6 +12,7 @@ import { buildProps } from '../world/props';
 import { buildVegetation } from '../world/vegetation';
 import { buildWater } from '../world/water';
 import { Vehicle, PlayerDriver } from '../entities/vehicle';
+import { initCarModels } from '../entities/carModels';
 import { Player, findEnterable, exitPointFor, FOOT_CAMERA } from '../entities/player';
 import { TrafficSystem } from '../entities/traffic';
 import { PedestrianSystem } from '../entities/pedestrians';
@@ -69,6 +70,10 @@ function headingAt(city: CityLayout, x: number, z: number): number {
 
 export function createSession(game: Game, assets: Assets, screens?: ScreensApi): Session {
   const city = generateCity(new Rng(SEED));
+
+  // Car bodies before any Vehicle is constructed: VehicleMesh asks the registry
+  // for a prepared model and falls back to its procedural boxes if there is none.
+  initCarModels(assets);
 
   // Image-based lighting first: buildGround/buildBuildings/buildProps all read
   // it when they choose between a PBR material and the procedural fallback.

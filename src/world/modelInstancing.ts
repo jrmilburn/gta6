@@ -41,14 +41,27 @@ function normalise(src: THREE.BufferGeometry): THREE.BufferGeometry | null {
   return g;
 }
 
+export interface FlattenOptions {
+  /**
+   * Keep the model's authored Y instead of dropping its base to y = 0.
+   *
+   * Vegetation wants the base on the ground whatever the artist did. A car body
+   * does not: its underside sits above the axle line by design, and re-origining
+   * it would bury the wheels.
+   */
+  keepY?: boolean;
+  /** Keep the authored X/Z too, for models whose parts must stay aligned. */
+  keepXZ?: boolean;
+}
+
 /**
  * Flatten `root` into one geometry per material, then one geometry with groups.
  *
- * Every mesh's own transform is baked in, and the result is re-centred on X/Z
- * with its base at y = 0 so a caller can place instances by their footprint
- * without knowing how the artist happened to origin the model.
+ * Every mesh's own transform is baked in, and by default the result is
+ * re-centred on X/Z with its base at y = 0, so a caller can place instances by
+ * their footprint without knowing how the artist happened to origin the model.
  */
-export function flattenModel(root: THREE.Object3D): FlatModel | null {
+export function flattenModel(root: THREE.Object3D, opts: FlattenOptions = {}): FlatModel | null {
   root.updateWorldMatrix(true, true);
   const inverse = new THREE.Matrix4().copy(root.matrixWorld).invert();
 
@@ -92,9 +105,9 @@ export function flattenModel(root: THREE.Object3D): FlatModel | null {
   const box = geometry.boundingBox ?? new THREE.Box3();
   // Re-origin: base on the ground, centred on its own footprint.
   geometry.translate(
-    -(box.min.x + box.max.x) / 2,
-    -box.min.y,
-    -(box.min.z + box.max.z) / 2,
+    opts.keepXZ ? 0 : -(box.min.x + box.max.x) / 2,
+    opts.keepY ? 0 : -box.min.y,
+    opts.keepXZ ? 0 : -(box.min.z + box.max.z) / 2,
   );
   geometry.computeBoundingBox();
   geometry.computeBoundingSphere();
