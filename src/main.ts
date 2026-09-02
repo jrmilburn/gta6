@@ -6,6 +6,7 @@ import { Game } from './core/game';
 import { param } from './core/rng';
 import { buildDevScene } from './dev/index';
 import { createSession } from './core/session';
+import { installShotHook } from './capture/shots';
 
 const mount = document.getElementById('app');
 if (!mount) throw new Error('#app missing');
@@ -30,6 +31,7 @@ async function boot(): Promise<void> {
   } else {
     const session = createSession(game);
     (window as unknown as { __session: unknown }).__session = session;
+    installShotHook(game, session);
   }
   game.start();
 }
