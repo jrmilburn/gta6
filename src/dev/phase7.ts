@@ -4,11 +4,12 @@
 // setters/events a later phase will use, to prove the HUD degrades to and from
 // "nothing to show" cleanly.
 import type { Game } from '../core/game';
+import { emptyAssets } from '../core/assets';
 import { createSession } from '../core/session';
 import { createUi } from '../ui/index';
 
 export function setup(game: Game): void {
-  const session = createSession(game);
+  const session = createSession(game, emptyAssets());
   const ui = createUi(game, session);
   game.add(ui);
 

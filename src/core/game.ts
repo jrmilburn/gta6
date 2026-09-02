@@ -7,6 +7,7 @@ import { Audio } from './audio';
 import { EventBus } from './events';
 import { param } from './rng';
 import { buildSky, updateSky, type SkyRig, type TimeOfDay } from '../world/sky';
+import { createPost, type PostChain } from './post';
 
 const STEP = CFG.feel.loop.step;
 const MAX_STEPS = CFG.feel.loop.maxSteps;
@@ -37,6 +38,8 @@ export class Game {
   readonly renderables: Renderable[] = [];
   readonly sky: SkyRig;
   readonly timeOfDay: TimeOfDay;
+  /** Post chain; `?post=0` makes this a straight render to the canvas. */
+  readonly post: PostChain;
   /** Interpolation alpha for the current render frame (0..1 between physics steps). */
   alpha = 0;
   time = 0;
@@ -57,7 +60,13 @@ export class Game {
     this.renderer.setSize(window.innerWidth, window.innerHeight);
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.15;
+    this.renderer.toneMappingExposure = 1.0;
+    // The post chain renders the scene through several passes, and
+    // WebGLRenderer.info resets itself on every one of them -- so the default
+    // accounting reports the final fullscreen quad (1 draw call) instead of the
+    // frame. Manual reset once per frame makes info.render.calls the honest
+    // per-frame total, post passes included.
+    this.renderer.info.autoReset = false;
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     mount.appendChild(this.renderer.domElement);
@@ -69,6 +78,7 @@ export class Game {
     this.camera.lookAt(0, 1, 0);
 
     this.sky = buildSky(this.scene, this.timeOfDay);
+    this.post = createPost(this.renderer, this.scene, this.camera, param('post') !== '0');
 
     this.input.onFirstKey = () => this.audio.resume();
     window.addEventListener('resize', () => this.onResize());
@@ -87,7 +97,7 @@ export class Game {
   private onResize(): void {
     this.camera.aspect = window.innerWidth / window.innerHeight;
     this.camera.updateProjectionMatrix();
-    this.renderer.setSize(window.innerWidth, window.innerHeight);
+    this.post.setSize(window.innerWidth, window.innerHeight);
   }
 
   start(): void {
@@ -105,6 +115,7 @@ export class Game {
         this.fpsClock = 0;
       }
 
+      this.renderer.info.reset();
       if (this.input.justPressed('pause')) this.paused = !this.paused;
 
       if (!this.paused) {
@@ -131,7 +142,7 @@ export class Game {
       FOCUS.copy(this.camera.position).addScaledVector(FORWARD, drop);
       FOCUS.y = 0;
       updateSky(this.sky, FOCUS, this.camera.position.y);
-      this.renderer.render(this.scene, this.camera);
+      this.post.render(this.scene, this.camera);
       this.input.endFrame();
     };
     requestAnimationFrame(frame);

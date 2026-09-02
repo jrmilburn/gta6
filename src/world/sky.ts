@@ -12,7 +12,49 @@ export interface SkyRig {
   sunDir: THREE.Vector3;
   /** Current shadow-frustum half-width in metres. */
   extent: number;
+  /** Re-tint the dome's vertex gradient in place. */
+  retint(top: THREE.Color, horizon: THREE.Color): void;
 }
+
+/**
+ * Point the rig at the sun read out of the HDRI, and pull the analytic fill
+ * back now that the environment map is doing that job (realism pass 2.1).
+ *
+ * Without this the world is lit twice -- once by a hemisphere light aimed one
+ * way and once by an environment map aimed another -- and every shadow lands
+ * somewhere the sky says it should not.
+ */
+export function matchSkyToEnvironment(
+  rig: SkyRig, sunDir: THREE.Vector3, sunColor: THREE.Color, horizon: THREE.Color,
+  time: TimeOfDay,
+): void {
+  rig.sunDir.copy(sunDir).normalize();
+  rig.sun.color.copy(sunColor);
+  // The environment map now supplies all the indirect light, so the analytic
+  // fill drops to a token amount; leaving it up washes every cast shadow flat.
+  rig.hemi.intensity = time === 'dusk' ? 0.10 : 0.14;
+  rig.ambient.intensity = 0.04;
+  rig.ambient.color.copy(horizon);
+  // The key has to stay well clear of the environment's fill or there is no
+  // shadow to see -- an unclamped IBL sunset lights the shadow side almost as
+  // brightly as the lit side.
+  rig.sun.intensity = time === 'dusk' ? 2.6 : 3.4;
+
+  // Agree with the backdrop: nudge the dome's horizon band toward the HDRI's,
+  // keeping most of the authored gradient so the look survives.
+  const p = PALETTES[time];
+  const top = new THREE.Color(p.top);
+  const band = new THREE.Color(p.horizon).lerp(horizon, 0.45);
+  rig.retint(top, band);
+
+  if (scene0) scene0.fog = new THREE.FogExp2(
+    band.clone().lerp(new THREE.Color(p.fog), 0.5).getHex(),
+    time === 'dusk' ? 0.0032 : 0.0026,
+  );
+}
+
+/** The scene buildSky was called on, so the fog can be re-tinted later. */
+let scene0: THREE.Scene | null = null;
 
 /**
  * Azimuth the sun sits in. Straight down -Z (the beach side) hides every shadow
@@ -49,11 +91,11 @@ const PALETTES: Record<TimeOfDay, Palette> = {
   dusk: { top: 0x2a1a5e, horizon: 0xff7a4d, fog: 0xd98a76, sun: 0xffb070, sunIntensity: 1.9, hemiIntensity: 0.55, elevation: 7 },
 };
 
-/** Inverted sphere with a vertex-colour zenith-to-horizon gradient. */
-function makeDome(top: THREE.Color, horizon: THREE.Color): THREE.Mesh {
-  const geo = new THREE.SphereGeometry(1200, 32, 20);
+/** Write the zenith-to-horizon gradient into an existing dome's colour attribute. */
+function tintDome(geo: THREE.BufferGeometry, top: THREE.Color, horizon: THREE.Color): void {
   const pos = geo.attributes.position;
-  const colors = new Float32Array(pos.count * 3);
+  const attr = geo.getAttribute('color') as THREE.BufferAttribute;
+  const colors = attr.array as Float32Array;
   const c = new THREE.Color();
   for (let i = 0; i < pos.count; i++) {
     // Bias the blend so the warm horizon band stays low and wide.
@@ -62,7 +104,16 @@ function makeDome(top: THREE.Color, horizon: THREE.Color): THREE.Mesh {
     c.copy(horizon).lerp(top, k);
     colors[i * 3] = c.r; colors[i * 3 + 1] = c.g; colors[i * 3 + 2] = c.b;
   }
+  attr.needsUpdate = true;
+}
+
+/** Inverted sphere with a vertex-colour zenith-to-horizon gradient. */
+function makeDome(top: THREE.Color, horizon: THREE.Color): THREE.Mesh {
+  const geo = new THREE.SphereGeometry(1200, 32, 20);
+  const pos = geo.attributes.position;
+  const colors = new Float32Array(pos.count * 3);
   geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+  tintDome(geo, top, horizon);
   const mat = new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.BackSide, fog: false, depthWrite: false });
   const mesh = new THREE.Mesh(geo, mat);
   mesh.renderOrder = -1000;
@@ -75,6 +126,7 @@ function makeDome(top: THREE.Color, horizon: THREE.Color): THREE.Mesh {
  * `beachAzimuth` is the compass direction (radians) the beach lies in.
  */
 export function buildSky(scene: THREE.Scene, time: TimeOfDay, beachAzimuth = SUN_AZIMUTH): SkyRig {
+  scene0 = scene;
   const p = PALETTES[time];
   const top = new THREE.Color(p.top);
   const horizon = new THREE.Color(p.horizon);
@@ -106,7 +158,10 @@ export function buildSky(scene: THREE.Scene, time: TimeOfDay, beachAzimuth = SUN
   const ambient = new THREE.AmbientLight(horizon.getHex(), time === 'dusk' ? 0.18 : 0.25);
   scene.add(ambient);
 
-  return { dome, sun, hemi, ambient, sunDir, extent: 160 };
+  return {
+    dome, sun, hemi, ambient, sunDir, extent: 160,
+    retint(t: THREE.Color, h: THREE.Color): void { tintDome(dome.geometry, t, h); },
+  };
 }
 
 /**

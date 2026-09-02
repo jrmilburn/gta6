@@ -1,6 +1,7 @@
 // Road surface, lane markings, kerbs/sidewalks, beach sand and the boardwalk.
 // Everything here is merged into a handful of BufferGeometries.
 import * as THREE from 'three';
+import { emptyAssets, type Assets } from '../core/assets';
 import { CFG } from '../config';
 import { getTextures } from '../core/textures';
 import { MeshBuilder } from './geomUtil';
@@ -86,7 +87,7 @@ function roadMarkings(): { yellow: THREE.BufferGeometry; white: THREE.BufferGeom
   return { yellow: y.build(), white: w.build() };
 }
 
-export function buildGround(layout: CityLayout): THREE.Group {
+export function buildGround(layout: CityLayout, _assets: Assets = emptyAssets()): THREE.Group {
   const tex = getTextures();
   const group = new THREE.Group();
   group.name = 'ground';

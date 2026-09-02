@@ -16,6 +16,10 @@ import { TrafficSystem } from '../entities/traffic';
 import { PedestrianSystem } from '../entities/pedestrians';
 import { CameraRig, cameraModeNames, type CameraModeName } from '../camera/cameras';
 import { createUi, type Ui } from '../ui/index';
+import type { ScreensApi } from '../ui/screens';
+import type { Assets } from './assets';
+import { installEnvironment } from '../world/envMap';
+import { matchSkyToEnvironment } from '../world/sky';
 import { CFG } from '../config';
 import { makeGroundSampler } from '../world/groundHeight';
 import type { AABB, VehicleKind } from '../types';
@@ -62,12 +66,19 @@ function headingAt(city: CityLayout, x: number, z: number): number {
   return Math.atan2(b.x - a.x, b.z - a.z);
 }
 
-export function createSession(game: Game): Session {
+export function createSession(game: Game, assets: Assets, screens?: ScreensApi): Session {
   const city = generateCity(new Rng(SEED));
 
-  game.scene.add(buildGround(city));
-  game.scene.add(buildBuildings(city));
-  game.scene.add(buildProps(city));
+  // Image-based lighting first: buildGround/buildBuildings/buildProps all read
+  // it when they choose between a PBR material and the procedural fallback.
+  if (assets.env) {
+    const env = installEnvironment(game.renderer, game.scene, assets.env);
+    matchSkyToEnvironment(game.sky, env.sun.dir, env.sun.color, env.sun.horizon, game.timeOfDay);
+  }
+
+  game.scene.add(buildGround(city, assets));
+  game.scene.add(buildBuildings(city, assets));
+  game.scene.add(buildProps(city, assets));
 
   const water = buildWater(game.sky.sunDir);
   game.scene.add(water.mesh);
@@ -240,7 +251,7 @@ export function createSession(game: Game): Session {
 
   // UI runs last in the system order (plan 1.1), so it renders the state every
   // other system has already settled this step.
-  session.ui = createUi(game, session);
+  session.ui = createUi(game, session, screens);
   game.add(session.ui);
   session.ui.showTitle();
 

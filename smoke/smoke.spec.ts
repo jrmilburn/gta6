@@ -46,8 +46,14 @@ test('boots, renders, holds framerate, no console errors', async ({ page }) => {
   await page.waitForTimeout(4000);
 
   const fps = await sampleFps(page, 3);
-  const calls = await page.evaluate(() => (window as unknown as { __game: { calls: number } }).__game.calls);
-  console.log(`fps=${fps.toFixed(1)} drawCalls=${calls}`);
+  const g = await page.evaluate(() => {
+    const w = window as unknown as { __game: { calls: number; sceneCalls: number; post: boolean } };
+    return { calls: w.__game.calls, sceneCalls: w.__game.sceneCalls, post: w.__game.post };
+  });
+  // Two numbers: the post chain re-renders the scene for its AO prepass, so
+  // `calls` counts the world's geometry more than once. `sceneCalls` is the
+  // world's own complexity, which is what the budget is about.
+  console.log(`fps=${fps.toFixed(1)} sceneDrawCalls=${g.sceneCalls} totalDrawCalls=${g.calls} post=${g.post}`);
 
   await shoot(page, 'main');
 

@@ -8,7 +8,7 @@ import type { Session } from '../core/session';
 import type { System, Vec2 } from '../types';
 import { param } from '../core/rng';
 import { createHud } from './hud';
-import { createScreens } from './screens';
+import { createScreens, type ScreensApi } from './screens';
 
 export interface Ui extends System {
   setStars(n: number): void;
@@ -46,12 +46,17 @@ function strField(payload: unknown, keys: readonly string[]): string | null {
   return null;
 }
 
-export function createUi(game: Game, session: Session): Ui {
+/**
+ * `existingScreens` lets boot put the title card and its loading bar on screen
+ * before the world exists, then hand the same instance to the UI rather than
+ * stacking a second overlay on top of it.
+ */
+export function createUi(game: Game, session: Session, existingScreens?: ScreensApi): Ui {
   const uiRoot = document.getElementById('ui');
   if (!uiRoot) throw new Error('#ui overlay root missing');
 
   const hud = createHud(uiRoot, session.city);
-  const screens = createScreens(uiRoot, game.audio);
+  const screens = existingScreens ?? createScreens(uiRoot, game.audio);
 
   let hudVisible = param('nohud') !== '1';
   hud.setVisible(hudVisible);

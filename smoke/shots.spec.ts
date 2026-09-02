@@ -64,7 +64,7 @@ async function suite(page: Page, query: string, suffix: string): Promise<void> {
   const n = (base: string): string => base + suffix;
 
   const p = await page.evaluate(() => window.__shots.player());
-  const close = orbit(p.x, p.z, 1.05, p.heading + Math.PI * 0.78, 2.6, 0.35);
+  const close = orbit(p.x, p.z, p.y + 1.05, p.heading + Math.PI * 0.78, 2.6, 0.35);
   await shoot(page, n('character-closeup'), close.eye, close.target, 38);
 
   for (const kind of ['palm', 'tree'] as const) {

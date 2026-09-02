@@ -1,6 +1,8 @@
 // Instanced building meshes from CityData. Boxes are bucketed by palette and by
 // height so each bucket can carry a window texture tiled at the right scale.
 import * as THREE from 'three';
+import { emptyAssets, type Assets } from '../core/assets';
+import { applyGroundAoTree } from './groundAo';
 import { getTextures } from '../core/textures';
 import { COOL, NEON_COLORS, NEON_WORDS, PASTELS, type CityBuilding, type CityLayout } from './cityGen';
 import { MeshBuilder, cylAt } from './geomUtil';
@@ -63,7 +65,7 @@ function makeInstanced(
   return mesh;
 }
 
-export function buildBuildings(layout: CityLayout): THREE.Group {
+export function buildBuildings(layout: CityLayout, _assets: Assets = emptyAssets()): THREE.Group {
   const tex = getTextures();
   const group = new THREE.Group();
   group.name = 'buildings';
@@ -202,6 +204,16 @@ export function buildBuildings(layout: CityLayout): THREE.Group {
     color: 0x0a2a6a, emissive: 0x2f6bff, emissiveIntensity: 1.6, roughness: 0.5,
   }));
   group.add(stripeMesh);
+
+  // Ground contact: darken the bottom 3 m so walls meet the pavement instead of
+  // floating on it (2.1). Neon and the police band opt out -- they are emissive
+  // and dimming them at street level is exactly backwards.
+  for (const child of group.children) {
+    if (child === stripeMesh) continue;
+    const mat = (child as THREE.Mesh).material as THREE.Material | undefined;
+    if (mat && (mat as THREE.MeshStandardMaterial).emissiveMap) continue;
+    applyGroundAoTree(child);
+  }
 
   return group;
 }

@@ -1,6 +1,8 @@
 // Palms, streetlights, traffic lights, benches, bins and park trees.
 // Every prop is an InstancedMesh. Instanced props never cast shadows (plan 0.6).
 import * as THREE from 'three';
+import { emptyAssets, type Assets } from '../core/assets';
+import { applyGroundAoTree } from './groundAo';
 import type { PropSpot, CityLayout } from './cityGen';
 import { boxAt, cylAt, mergeGeos } from './geomUtil';
 
@@ -67,7 +69,7 @@ function crownGeo(): THREE.BufferGeometry {
   return mergeGeos(parts);
 }
 
-export function buildProps(layout: CityLayout): THREE.Group {
+export function buildProps(layout: CityLayout, _assets: Assets = emptyAssets()): THREE.Group {
   const group = new THREE.Group();
   group.name = 'props';
   const p = layout.props;
@@ -126,6 +128,11 @@ export function buildProps(layout: CityLayout): THREE.Group {
     ]);
     group.add(place(foliage, new THREE.MeshStandardMaterial({ color: 0x4d8c40, roughness: 0.9, flatShading: true }), p.trees, 0.16));
   }
+
+  // Ground contact (2.1). Props are short, so the fade is tighter than the
+  // buildings' and the floor is lighter -- a 0.85 m bin should be shaded at its
+  // base, not silhouetted.
+  applyGroundAoTree(group, 1.4, 0.72);
 
   return group;
 }

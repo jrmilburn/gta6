@@ -31,6 +31,8 @@ const TITLE_TEXT = `
 
 export interface ScreensApi {
   root: HTMLDivElement;
+  /** Boot progress bar, 0..1. Hidden automatically once it reaches 1. */
+  setProgress(fraction: number, label: string): void;
   /** True while a screen owns the frame (later phases can use this to pause input). */
   active: boolean;
   tick(dt: number): void;
@@ -52,8 +54,8 @@ export function createScreens(uiRoot: HTMLElement, audio: BlipHost): ScreensApi 
   const title = el(
     'div',
     `position:absolute; inset:0; display:flex; flex-direction:column; align-items:center;
-     justify-content:center; background:linear-gradient(180deg, rgba(10,8,20,0.15), rgba(6,4,14,0.55));
-     opacity:0; transition:opacity ${FADE}s ease;`,
+     justify-content:center; background:linear-gradient(180deg, #141026, #0b0716);
+     opacity:0; transition:opacity ${FADE}s ease, background ${FADE * 2}s ease;`,
   );
   const titleMain = el(
     'div',
@@ -65,8 +67,30 @@ export function createScreens(uiRoot: HTMLElement, audio: BlipHost): ScreensApi 
     `${TITLE_TEXT} font-size:20px; font-weight:700; letter-spacing:0.08em; margin-top:18px; opacity:0.9;`,
     'press any key',
   );
-  title.append(titleMain, titleSub);
+  // Loading bar. The title is shown from the first frame so the player has
+  // something to look at while the environment map and models come down; `press
+  // any key` only replaces the bar once everything is in.
+  const barTrack = el(
+    'div',
+    `width:min(46vw, 420px); height:4px; margin-top:26px; border-radius:2px;
+     background:rgba(255,255,255,0.18); overflow:hidden;`,
+  );
+  const barFill = el(
+    'div',
+    `width:0%; height:100%; border-radius:2px; background:#ffd9a0;
+     transition:width 0.18s ease-out;`,
+  );
+  barTrack.appendChild(barFill);
+  const barLabel = el(
+    'div',
+    `${TITLE_TEXT} font-size:13px; font-weight:600; letter-spacing:0.14em;
+     margin-top:10px; opacity:0.65; text-transform:uppercase;`,
+    'loading',
+  );
+
+  title.append(titleMain, titleSub, barTrack, barLabel);
   root.appendChild(title);
+  titleSub.style.display = 'none';
 
   // --- pulse overlays (wrecked / busted / mission passed) ---
   const pulse = el(
@@ -81,9 +105,12 @@ export function createScreens(uiRoot: HTMLElement, audio: BlipHost): ScreensApi 
 
   let titleVisible = false;
   let titleFading = false;
+  let loaded = false;
 
   function dismissTitle(): void {
-    if (!titleVisible || titleFading) return;
+    // The game must not start before the assets are in, so a keypress during
+    // the load is ignored rather than queued.
+    if (!loaded || !titleVisible || titleFading) return;
     titleFading = true;
     title.style.opacity = '0';
     window.setTimeout(() => {
@@ -114,6 +141,18 @@ export function createScreens(uiRoot: HTMLElement, audio: BlipHost): ScreensApi 
 
   return {
     root,
+    setProgress(fraction: number, label: string): void {
+      const f = Math.max(0, Math.min(1, fraction));
+      barFill.style.width = `${(f * 100).toFixed(1)}%`;
+      barLabel.textContent = label;
+      if (f < 1 || loaded) return;
+      loaded = true;
+      barTrack.style.display = 'none';
+      barLabel.style.display = 'none';
+      titleSub.style.display = '';
+      // Loading is over: let the world show through the title card.
+      title.style.background = 'linear-gradient(180deg, rgba(10,8,20,0.15), rgba(6,4,14,0.55))';
+    },
     get active(): boolean { return titleVisible || pulseKind !== null; },
     get titleActive(): boolean { return titleVisible; },
     tick(dt: number): void {
