@@ -38,6 +38,10 @@ export interface Textures {
   windowsCool: THREE.CanvasTexture;
   sand: THREE.CanvasTexture;
   grass: THREE.CanvasTexture;
+  /** Timber decking for the beach boardwalk (Phase 1). */
+  planks: THREE.CanvasTexture;
+  /** Bright blue curtain-wall glass for the downtown towers (Phase 1). */
+  windowsGlass: THREE.CanvasTexture;
   neon(word: string, color: string): THREE.CanvasTexture;
 }
 
@@ -113,6 +117,52 @@ function grassTex(rng: Rng): THREE.CanvasTexture {
   return toTexture(ctx, 1);
 }
 
+/**
+ * Curtain-wall glass: pale mullion grid over panes that vary from sky-blue to
+ * near-white, so downtown towers catch the sun instead of going to mud.
+ */
+function glassTex(rng: Rng): THREE.CanvasTexture {
+  const ctx = makeCanvas(256);
+  ctx.fillStyle = '#cfe2f2';
+  ctx.fillRect(0, 0, 256, 256);
+  const cols = 8, rows = 8, pad = 3;
+  const cw = 256 / cols, ch = 256 / rows;
+  for (let y = 0; y < rows; y++) {
+    // Spandrel band under every floor keeps a horizontal rhythm.
+    ctx.fillStyle = 'rgba(120,155,185,0.75)';
+    ctx.fillRect(0, y * ch + ch - pad, 256, pad);
+    for (let x = 0; x < cols; x++) {
+      const v = rng.range(0, 1);
+      const lit = rng.chance(0.3);
+      ctx.fillStyle = lit
+        ? `rgba(${Math.floor(215 + v * 35)},${Math.floor(235 + v * 20)},255,1)`
+        : `rgba(${Math.floor(112 + v * 60)},${Math.floor(160 + v * 60)},${Math.floor(198 + v * 45)},1)`;
+      ctx.fillRect(x * cw + pad, y * ch + pad, cw - pad * 2, ch - pad * 2);
+    }
+  }
+  return toTexture(ctx, 1);
+}
+
+/** Weathered timber decking: eight planks with grain streaks and dark seams. */
+function planksTex(rng: Rng): THREE.CanvasTexture {
+  const ctx = makeCanvas(256);
+  ctx.fillStyle = '#c9a473';
+  ctx.fillRect(0, 0, 256, 256);
+  const n = 8, ph = 256 / n;
+  for (let i = 0; i < n; i++) {
+    const v = rng.range(-14, 14);
+    ctx.fillStyle = `rgb(${Math.floor(201 + v)},${Math.floor(164 + v)},${Math.floor(115 + v)})`;
+    ctx.fillRect(0, i * ph, 256, ph - 1);
+    for (let g = 0; g < 26; g++) {
+      ctx.fillStyle = `rgba(120,88,52,${rng.range(0.05, 0.16)})`;
+      ctx.fillRect(rng.range(0, 256), i * ph + rng.range(2, ph - 3), rng.range(10, 60), 1);
+    }
+    ctx.fillStyle = 'rgba(84,60,36,0.55)';
+    ctx.fillRect(0, i * ph + ph - 2, 256, 2);
+  }
+  return toTexture(ctx, 1);
+}
+
 /** Invented brand word on a dark plate, used as an emissive map for neon signs. */
 function neonTex(word: string, color: string): THREE.CanvasTexture {
   const ctx = makeCanvas(512, 128);
@@ -143,6 +193,8 @@ export function getTextures(): Textures {
     windowsCool: windowsTex(rng, true),
     sand: sandTex(rng),
     grass: grassTex(rng),
+    planks: planksTex(rng),
+    windowsGlass: glassTex(rng),
     neon: neonTex,
   };
   return cache;
