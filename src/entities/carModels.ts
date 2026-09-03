@@ -13,6 +13,8 @@ import * as THREE from 'three';
 import type { Assets, CarModel } from '../core/assets';
 import type { VehicleKind } from '../types';
 import { flattenModel } from '../world/modelInstancing';
+import { prepareSupplied } from './suppliedCars';
+import { SUPPLIED_CARS, type SuppliedCar } from '../core/assets';
 
 /** Which kit model each of the game's four kinds uses. */
 export const KIND_MODEL: Record<VehicleKind, CarModel> = {
@@ -35,12 +37,19 @@ export interface WheelSlot {
 export interface CarModelData {
   /** Body geometry with baked vertex colours and a `paint` mask attribute. */
   body: THREE.BufferGeometry;
-  /** Wheel geometry, origin at the axle. */
-  wheel: THREE.BufferGeometry;
+  /** Wheel geometry, origin at the axle. Null when the wheels are part of the
+   *  body and cannot be driven separately (see suppliedCars.ts). */
+  wheel: THREE.BufferGeometry | null;
   /** Where the artist put the wheels, in the scaled model's own space. */
   wheels: WheelSlot[];
   /** Radius of the wheel after scaling, so the body sits at the right height. */
   wheelRadius: number;
+  /** A supplied car's own PBR material; null for the vertex-coloured kit path. */
+  texturedMaterial?: THREE.MeshStandardMaterial | null;
+  /** The colour the supplied model was painted, for the per-car HSV remap. */
+  basePaint?: THREE.Color | null;
+  /** True when the model paints its own head and tail lights into its texture. */
+  bakedLights?: boolean;
 }
 
 /** Read a loaded texture's pixels once, for baking. */
@@ -205,9 +214,19 @@ const PREPARED = new Map<VehicleKind, CarModelData>();
 export function initCarModels(assets: Assets): void {
   PREPARED.clear();
   for (const kind of Object.keys(KIND_MODEL) as VehicleKind[]) {
-    const data = prepareCar(assets, KIND_MODEL[kind]);
+    // A car supplied in raw/ outranks the kit body for its kind (brief 7b).
+    const data = (SUPPLIED_CARS.includes(kind as SuppliedCar)
+      ? prepareSupplied(assets, kind as SuppliedCar) : null)
+      ?? prepareCar(assets, KIND_MODEL[kind]);
     if (data) PREPARED.set(kind, data);
   }
+}
+
+/** Which kinds ended up on a supplied body, for ASSETS.md parity and the smoke suite. */
+export function carModelSources(): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [kind, data] of PREPARED) out[kind] = data.texturedMaterial ? 'supplied' : 'kit';
+  return out;
 }
 
 /** Prepared model for `kind`, or null when the procedural body should be used. */

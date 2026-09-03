@@ -1,0 +1,35 @@
+{
+  "cars": [
+    {
+      "kind": "sedan",
+      "file": "sedan.glb",
+      "bytes": 846892,
+      "tris": 23832,
+      "sourceTris": 65416,
+      "maps": "color+normal+rough+metal",
+      "fit": {
+        "scale": 2.3178341317889952,
+        "rotated": true,
+        "length": 4.4,
+        "width": 1.951,
+        "height": 1.429
+      }
+    },
+    {
+      "kind": "sports",
+      "file": "sports.glb",
+      "bytes": 1398976,
+      "tris": 23994,
+      "sourceTris": 551067,
+      "maps": "color+normal+rough+metal",
+      "fit": {
+        "scale": 2.317378684878441,
+        "rotated": true,
+        "length": 4.4,
+        "width": 2.071,
+        "height": 1.121
+      }
+    }
+  ],
+  "generated": "2026-09-03"
+}

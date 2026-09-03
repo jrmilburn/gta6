@@ -1,0 +1,20 @@
+{
+  "props": [
+    {
+      "name": "bin",
+      "id": "metal_trash_can",
+      "bytes": 157656,
+      "tris": 594,
+      "height": 0.92
+    },
+    {
+      "name": "hydrant",
+      "id": "fire_hydrant",
+      "bytes": 261144,
+      "tris": 500,
+      "height": 0.78
+    }
+  ],
+  "source": "polyhaven",
+  "generated": "2026-09-03"
+}

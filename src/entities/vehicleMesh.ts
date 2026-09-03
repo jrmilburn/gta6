@@ -11,6 +11,7 @@ import { CFG } from '../config';
 import { Spring, smoothNoise } from '../core/smooth';
 import { WHEEL_RADIUS, bake, box, specFor, type Spec } from './vehicleShapes';
 import { carModelFor, paintable, type CarModelData } from './carModels';
+import { repaint } from './suppliedCars';
 
 export { BODY_COLORS, pickBodyColor } from './vehicleShapes';
 
@@ -41,12 +42,15 @@ interface Chassis {
   /** Set the paint colour on a model body; null for the procedural one, whose
    *  colour is baked into its vertices. */
   paint: { value: THREE.Color } | null;
-  wheelGeo: THREE.BufferGeometry;
+  /** Null when the model's wheels are part of its body (see suppliedCars.ts). */
+  wheelGeo: THREE.BufferGeometry | null;
   wheelMaterial: THREE.Material;
   wheelRadius: number;
   wheels: Array<{ x: number; y: number; z: number; front: boolean }>;
   lights: Lights;
   lightBar: boolean;
+  /** True when the body already has its lights in its texture. */
+  bakedLights: boolean;
 }
 
 /**
@@ -67,8 +71,34 @@ function paintMaterial(hero: boolean): THREE.Material {
 
 /** Chassis from a loaded kit model. */
 function modelChassis(data: CarModelData, kind: VehicleKind, color: number, hero: boolean): Chassis {
-  const bodyMaterial = paintMaterial(hero);
-  const paint = paintable(bodyMaterial, new THREE.Color(color).convertSRGBToLinear());
+  // Two kinds of body. A kit car is a palette lookup baked into vertex colours,
+  // so it gets a fresh vertex-coloured material and paints through an attribute.
+  // A supplied car brings its own PBR maps, so its material is cloned per
+  // vehicle (textures stay shared) and paints through a mask instead.
+  const linear = new THREE.Color(color).convertSRGBToLinear();
+  let bodyMaterial: THREE.Material;
+  let paint: { value: THREE.Color } | null;
+  if (data.texturedMaterial) {
+    const m = data.texturedMaterial.clone();
+    // The player's car is the one vehicle on screen every second, so it is the
+    // only one worth a clearcoat over the paint. Built field by field rather
+    // than with Material.copy(): copying a standard material into a physical one
+    // leaves every physical-only field undefined, which reaches the shader.
+    bodyMaterial = hero
+      ? new THREE.MeshPhysicalMaterial({
+        map: m.map, normalMap: m.normalMap, metalnessMap: m.metalnessMap,
+        roughnessMap: m.roughnessMap, metalness: m.metalness, roughness: m.roughness,
+        clearcoat: 0.85, clearcoatRoughness: 0.12,
+      })
+      : m;
+    // The HSV remap works in sRGB, because that is the space the albedo was
+    // authored in and the space its hue means anything in.
+    if (data.basePaint) repaint(bodyMaterial, data.basePaint, new THREE.Color(color));
+    paint = null;
+  } else {
+    bodyMaterial = paintMaterial(hero);
+    paint = paintable(bodyMaterial, linear);
+  }
 
   data.body.computeBoundingBox();
   const box3 = data.body.boundingBox ?? new THREE.Box3();
@@ -77,9 +107,13 @@ function modelChassis(data: CarModelData, kind: VehicleKind, color: number, hero
   // Sunk a few centimetres into the panel rather than proud of it: the kit's
   // bumpers are chamfered, and a light box sitting on the bounding plane hangs
   // in the air at the corners.
+  // A supplied car has its lights painted on, so the only box it still needs is
+  // the brake glow -- and that has to sit deep enough in the tail not to poke
+  // out through a bumper the kit cars do not have.
+  const inset = data.bakedLights ? 0.26 : 0.06;
   const lights: Lights = {
-    head: { x: halfW * 0.58, y: box3.min.y + height * 0.40, z: box3.max.z - 0.06 },
-    tail: { x: halfW * 0.62, y: box3.min.y + height * 0.44, z: box3.min.z + 0.06 },
+    head: { x: halfW * 0.58, y: box3.min.y + height * 0.40, z: box3.max.z - inset },
+    tail: { x: halfW * 0.56, y: box3.min.y + height * (data.bakedLights ? 0.36 : 0.44), z: box3.min.z + inset },
   };
 
   return {
@@ -92,6 +126,7 @@ function modelChassis(data: CarModelData, kind: VehicleKind, color: number, hero
     wheels: data.wheels,
     lights,
     lightBar: kind === 'police',
+    bakedLights: data.bakedLights === true,
   };
 }
 
@@ -124,6 +159,7 @@ function proceduralChassis(kind: VehicleKind, color: number, hero: boolean): Cha
     })),
     lights: { head: spec.head, tail: spec.tail },
     lightBar: spec.lightBar,
+    bakedLights: false,
   };
 }
 
@@ -178,22 +214,25 @@ export class VehicleMesh {
       color: 0xfff3d2, emissive: 0xfff0c8, emissiveIntensity: 1.4, roughness: 0.3,
     }));
     const h = chassis.lights.head;
-    const headGeo = bake([
-      box(0.34, 0.14, 0.08, 0xffffff, -h.x, h.y, h.z),
-      box(0.34, 0.14, 0.08, 0xffffff, h.x, h.y, h.z),
-    ]);
-    this.owned.push(headGeo);
-    const headMesh = new THREE.Mesh(headGeo, headMat);
-    this.body.add(headMesh);
-    this.detailParts.push(headMesh);
+    if (!chassis.bakedLights) {
+      const headGeo = bake([
+        box(0.34, 0.14, 0.08, 0xffffff, -h.x, h.y, h.z),
+        box(0.34, 0.14, 0.08, 0xffffff, h.x, h.y, h.z),
+      ]);
+      this.owned.push(headGeo);
+      const headMesh = new THREE.Mesh(headGeo, headMat);
+      this.body.add(headMesh);
+      this.detailParts.push(headMesh);
+    }
 
     this.tailMat = this.own(new THREE.MeshStandardMaterial({
       color: 0xc01818, emissive: 0xff2a1a, emissiveIntensity: 1.0, roughness: 0.35,
     }));
     const t = chassis.lights.tail;
+    const w = chassis.bakedLights ? 0.22 : 0.30;
     const tailGeo = bake([
-      box(0.30, 0.12, 0.07, 0xffffff, -t.x, t.y, t.z),
-      box(0.30, 0.12, 0.07, 0xffffff, t.x, t.y, t.z),
+      box(w, 0.10, 0.07, 0xffffff, -t.x, t.y, t.z),
+      box(w, 0.10, 0.07, 0xffffff, t.x, t.y, t.z),
     ]);
     this.owned.push(tailGeo);
     const tailMesh = new THREE.Mesh(tailGeo, this.tailMat);
@@ -215,17 +254,22 @@ export class VehicleMesh {
       }
     }
 
-    // Wheels: yaw group (steering) -> spin group (axle) -> tyre.
+    // Wheels: yaw group (steering) -> spin group (axle) -> tyre. A supplied car
+    // has none of its own -- its wheels are welded into the body -- so this
+    // whole block is skipped and the car simply rolls on the ones in its mesh.
+    const wheelGeo = chassis.wheelGeo;
     const wheelMat = this.own(chassis.wheelMaterial);
-    if (!data) this.owned.push(chassis.wheelGeo);
+    if (!data && wheelGeo) this.owned.push(wheelGeo);
     // Front wheels first, so the steering loop in update() stays index-based
     // whichever order the model happened to list its wheel nodes in.
-    const slots = [...chassis.wheels].sort((a, b) => Number(b.front) - Number(a.front));
+    const slots = wheelGeo
+      ? [...chassis.wheels].sort((a, b) => Number(b.front) - Number(a.front))
+      : [];
     for (const slot of slots) {
       const yaw = new THREE.Group();
       yaw.position.set(slot.x, slot.y, slot.z);
       const spin = new THREE.Group();
-      const wheel = new THREE.Mesh(chassis.wheelGeo, wheelMat);
+      const wheel = new THREE.Mesh(wheelGeo ?? undefined, wheelMat);
       wheel.castShadow = true;
       spin.add(wheel);
       yaw.add(spin);

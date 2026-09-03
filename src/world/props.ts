@@ -5,6 +5,27 @@ import { emptyAssets, type Assets } from '../core/assets';
 import { applyGroundAoTree } from './groundAo';
 import type { PropSpot, CityLayout } from './cityGen';
 import { boxAt, cylAt, mergeGeos } from './geomUtil';
+import { flattenModel } from './modelInstancing';
+import type { StreetModel } from '../core/assets';
+
+/**
+ * A Poly Haven street prop, instanced at `spots`.
+ *
+ * The models arrive from scripts/fetch-props.mjs already standing on y = 0 at
+ * their real height, so nothing here rescales them: a 0.92 m bin is 0.92 m
+ * because that is how tall a bin is, and the character walking past it is the
+ * check on that.
+ */
+function placeStreet(
+  assets: Assets, name: StreetModel, spots: PropSpot[], y: number,
+): THREE.InstancedMesh | null {
+  if (spots.length === 0) return null;
+  const src = assets.street(name);
+  if (!src) return null;
+  const flat = flattenModel(src, { keepY: true, keepXZ: true });
+  if (!flat) return null;
+  return place(flat.geometry, flat.materials[0], spots, y);
+}
 
 function place(
   geo: THREE.BufferGeometry, mat: THREE.Material, spots: PropSpot[],
@@ -76,7 +97,7 @@ function crownGeo(): THREE.BufferGeometry {
  * are still what runs if the nature kit is missing.
  */
 export function buildProps(
-  layout: CityLayout, _assets: Assets = emptyAssets(), skipVegetation = false,
+  layout: CityLayout, assets: Assets = emptyAssets(), skipVegetation = false,
 ): THREE.Group {
   const group = new THREE.Group();
   group.name = 'props';
@@ -124,8 +145,23 @@ export function buildProps(
     group.add(place(bench, new THREE.MeshStandardMaterial({ color: 0xb98a55, roughness: 0.9 }), p.benches, 0.16));
   }
   if (p.bins.length) {
-    group.add(place(cylAt(0.3, 0.26, 0.85, 8, 0, 0.42, 0),
-      new THREE.MeshStandardMaterial({ color: 0x35604a, roughness: 0.8 }), p.bins, 0.16));
+    // Two thirds bins, one third fire hydrants: the city generator only has one
+    // kind of small-sidewalk-prop spot, and a street with a hydrant on it reads
+    // as an American city in a way a street of identical bins does not.
+    const bins = p.bins.filter((_, i) => i % 3 !== 0);
+    const hydrants = p.bins.filter((_, i) => i % 3 === 0);
+    const binMesh = placeStreet(assets, 'bin', bins, 0.16);
+    const hydrantMesh = placeStreet(assets, 'hydrant', hydrants, 0.16);
+    if (binMesh) group.add(binMesh);
+    if (hydrantMesh) group.add(hydrantMesh);
+    // Fallback: the procedural bin covers every spot when the models are absent.
+    if (!binMesh && !hydrantMesh) {
+      group.add(place(cylAt(0.3, 0.26, 0.85, 8, 0, 0.42, 0),
+        new THREE.MeshStandardMaterial({ color: 0x35604a, roughness: 0.8 }), p.bins, 0.16));
+    } else if (!binMesh) {
+      group.add(place(cylAt(0.3, 0.26, 0.85, 8, 0, 0.42, 0),
+        new THREE.MeshStandardMaterial({ color: 0x35604a, roughness: 0.8 }), bins, 0.16));
+    }
   }
 
   // --- park trees ---------------------------------------------------------------
