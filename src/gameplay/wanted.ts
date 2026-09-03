@@ -20,6 +20,13 @@ const P = CFG.police;
 const CRASH_IMPACT = 10;
 /** How far a patrol car sees a crime from. */
 const WITNESS_RANGE = 40;
+/**
+ * A collision counts as the player's only if it happened at the player. The
+ * pedestrian and vehicle systems report every impact in the city, and the
+ * traffic has accidents of its own -- which used to be charged to the player,
+ * so the stars climbed with nobody at the wheel.
+ */
+const MINE_RANGE = 6;
 
 export interface WantedHost {
   events: {
@@ -75,16 +82,24 @@ export class WantedSystem implements System {
     // which has already been counted through its own event.
     host.events.on('pedHit', (p) => {
       if ((p as Payload)?.knockdown) return;
+      if (!this.mine(p as Payload)) return;
       this.crime(H.runOver, p as Payload);
     });
-    host.events.on('policeHit', (p) => this.crime(H.ramPolice, p as Payload));
+    host.events.on('policeHit', (p) => { if (this.mine(p as Payload)) this.crime(H.ramPolice, p as Payload); });
     host.events.on('vehicleHit', (p) => {
       const impact = (p as Payload)?.impact ?? 0;
-      if (impact < CRASH_IMPACT) return;
+      if (impact < CRASH_IMPACT || !this.mine(p as Payload)) return;
       // Only a crash a unit can see is a crime; a fender-bender behind a
       // building is nobody's business.
       if (this.seenBy(this.where(p as Payload))) this.crime(H.crashInView, p as Payload);
     });
+  }
+
+  /** Did this happen at the player's own position (their car, or their feet)? */
+  private mine(p: Payload): boolean {
+    if (p?.x === undefined || p?.z === undefined) return true;
+    const me = this.deps.focus?.() ?? this.deps.player.pos;
+    return Math.hypot(p.x - me.x, p.z - me.z) < MINE_RANGE;
   }
 
   private where(p: Payload): Vec2 {
