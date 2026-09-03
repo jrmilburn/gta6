@@ -36,6 +36,24 @@ function simTime(page: Page): Promise<number> {
   return page.evaluate(() => (window as unknown as { __game: { game: { time: number } } }).__game.game.time);
 }
 
+/**
+ * Advance `seconds` of SIMULATED time.
+ *
+ * The distinction is the whole reason this helper exists. Game.step() caps how
+ * much time one rendered frame may simulate, so on a software rasteriser a
+ * wall-clock window covers a fraction of the motion it would on real hardware --
+ * and a wall-clock wait ends up measuring the machine. Three wall seconds here
+ * were about a quarter of a simulated one, in which a pedestrian walking at
+ * 1.4 m/s covers 35 cm, and the assertion below wants half a metre.
+ */
+async function sim(page: Page, seconds: number): Promise<void> {
+  await page.evaluate(async (secs: number) => {
+    const w = window as unknown as { __game: { game: { time: number } } };
+    const end = w.__game.game.time + secs;
+    while (w.__game.game.time < end) await new Promise((r) => setTimeout(r, 30));
+  }, seconds);
+}
+
 test('traffic flows without gridlock, pedestrians wander, and scatter when driven at', async ({ page }) => {
   // The plan's bar is "does not pile up for 60 s", so this spec simulates a full
   // minute. Game.step() caps at 5 fixed ticks per rendered frame, so on the
@@ -65,10 +83,10 @@ test('traffic flows without gridlock, pedestrians wander, and scatter when drive
   expect(spreadX).toBeGreaterThan(100);
   expect(spreadZ).toBeGreaterThan(100);
 
-  await page.waitForTimeout(4000);
+  await sim(page, 4);
   const cars1 = await trafficCars(page);
   const moving1 = cars1.filter((c) => Math.abs(c.speed) > 1).length;
-  console.log(`moving after ~4s: ${moving1}/${cars1.length}`);
+  console.log(`moving after 4 simulated seconds: ${moving1}/${cars1.length}`);
   expect(moving1).toBeGreaterThan(cars1.length * 0.3);
   await shoot(page, 'flowing');
 
@@ -93,12 +111,12 @@ test('traffic flows without gridlock, pedestrians wander, and scatter when drive
   // --- 3. pedestrians exist and wander ----------------------------------------
   const peds0 = await pedList(page);
   expect(peds0.length).toBeGreaterThan(0);
-  await page.waitForTimeout(3000);
+  await sim(page, 3);
   const peds1 = await pedList(page);
   let totalMoved = 0;
   for (let i = 0; i < peds0.length; i++) totalMoved += Math.hypot(peds1[i].x - peds0[i].x, peds1[i].z - peds0[i].z);
   const avgMoved = totalMoved / peds0.length;
-  console.log(`pedestrian avg movement over 3s: ${avgMoved.toFixed(2)} m`);
+  console.log(`pedestrian avg movement over 3 simulated seconds: ${avgMoved.toFixed(2)} m`);
   expect(avgMoved).toBeGreaterThan(0.5);
 
   // --- 4. drive a car straight at a pedestrian: the crowd scatters -----------
@@ -157,7 +175,7 @@ test('traffic flows without gridlock, pedestrians wander, and scatter when drive
   await page.evaluate(() => (window as unknown as { __input: { set(c: string, d: boolean): void } }).__input.set('KeyW', true));
   let peak = 0;
   for (let i = 0; i < 12; i++) {
-    await page.waitForTimeout(500);
+    await sim(page, 0.5);
     peak = Math.max(peak, await nearFleeing());
   }
   await page.evaluate(() => (window as unknown as { __input: { set(c: string, d: boolean): void } }).__input.set('KeyW', false));
