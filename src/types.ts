@@ -72,7 +72,11 @@ export type EventName =
   | 'missionFailed'
   | 'cashChanged'
   | 'danceStart'
-  | 'danceEnd';
+  | 'danceEnd'
+  | 'punchHit'
+  | 'shotHit'
+  | 'goofyChanged'
+  | 'armedChanged';
 
 export interface GameEvents {
   on(evt: EventName, fn: (payload?: unknown) => void): void;

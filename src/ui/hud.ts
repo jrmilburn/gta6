@@ -43,6 +43,14 @@ export interface HudApi {
   setVisible(v: boolean): void;
   /** Brief centred message, e.g. "Dance!". Replaces any toast still showing. */
   toast(text: string, seconds: number): void;
+  /** Crosshair and ammo readout while the pistol is out (section 7). */
+  setArmed(armed: boolean, aiming: boolean, shots: number): void;
+  /** The goofy-run indicator (section 5). */
+  setGoofy(on: boolean): void;
+  /** Contextual action prompt, e.g. "E  GET IN". Null hides it. */
+  setPrompt(text: string | null): void;
+  /** "Click to look around", shown until the pointer has been locked once. */
+  setLookHint(show: boolean): void;
   tick(dt: number, speedKmh: number, healthFrac: number, playerPos: Vec2, heading: number, dots: MinimapDots): void;
 }
 
@@ -83,6 +91,45 @@ export function createHud(uiRoot: HTMLElement, city: CityLayout): HudApi {
   const timer = el('div', 'font-size:24px; margin-top:4px; opacity:0.92;');
   bottomCenter.append(missionText, timer);
 
+  // --- centre: crosshair ---
+  // Four ticks and a gap, not a dot: a dot vanishes against a bright wall, and
+  // the gap is what tightens when the player aims.
+  const cross = el('div', 'position:absolute; inset:0; pointer-events:none; opacity:0;'
+    + ' transition:opacity 0.12s ease;');
+  const ticks: HTMLDivElement[] = [];
+  for (let i = 0; i < 4; i++) {
+    const t = el('div', 'position:absolute; left:50%; top:50%; background:#fff;'
+      + ' box-shadow:0 0 3px rgba(0,0,0,0.9); transition:transform 0.12s ease;');
+    const vertical = i < 2;
+    t.style.width = vertical ? '2px' : '9px';
+    t.style.height = vertical ? '9px' : '2px';
+    cross.appendChild(t);
+    ticks.push(t);
+  }
+  const ammo = el('div', 'position:absolute; bottom:96px; right:20px; font-size:16px;'
+    + ' letter-spacing:0.12em; opacity:0;  transition:opacity 0.15s ease;');
+
+  // --- lower centre: contextual prompt ---
+  // Just above the mission line, where the eye already goes for state, and only
+  // ever shown when there is something to press.
+  const prompt = el(
+    'div',
+    'position:absolute; bottom:78px; left:50%; transform:translateX(-50%); font-size:15px;'
+      + ' letter-spacing:0.12em; padding:5px 12px; border-radius:14px;'
+      + ' background:rgba(0,0,0,0.5); border:1px solid rgba(255,255,255,0.35);'
+      + ' opacity:0; transition:opacity 0.15s ease; pointer-events:none; white-space:nowrap;',
+  );
+
+  // --- lower left: mode indicators ---
+  const modes = el('div', 'position:absolute; bottom:20px; left:20px; font-size:14px;'
+    + ' letter-spacing:0.1em; display:flex; gap:10px;');
+  const goofyTag = el('div', 'padding:3px 8px; border-radius:11px; background:rgba(0,0,0,0.45);'
+    + ' border:1px solid rgba(255,255,255,0.35); display:none;', 'GOOFY');
+  const lookHint = el('div', 'padding:3px 8px; border-radius:11px; background:rgba(0,0,0,0.45);'
+    + ' border:1px solid rgba(255,255,255,0.25); opacity:0.85; font-weight:600;',
+  'click to look around');
+  modes.append(goofyTag, lookHint);
+
   // --- upper centre: transient toast ---
   // Above the mission line and below the centre of frame, so it never sits over
   // the character it is announcing.
@@ -97,7 +144,7 @@ export function createHud(uiRoot: HTMLElement, city: CityLayout): HudApi {
   const minimap = createMinimap(city);
   topLeft.appendChild(minimap.canvas);
 
-  root.append(topRight, bottomRight, bottomCenter, topLeft, toastEl);
+  root.append(topRight, bottomRight, bottomCenter, topLeft, toastEl, cross, ammo, modes, prompt);
   uiRoot.appendChild(root);
 
   let starCount = 0;
@@ -130,6 +177,27 @@ export function createHud(uiRoot: HTMLElement, city: CityLayout): HudApi {
     },
     setVisible(v: boolean): void {
       root.style.display = v ? '' : 'none';
+    },
+    setArmed(armed: boolean, aiming: boolean, shots: number): void {
+      cross.style.opacity = armed ? '1' : '0';
+      ammo.style.opacity = armed ? '0.9' : '0';
+      ammo.textContent = `● ∞   ${shots} FIRED`;
+      // Aiming pulls the ticks in; hip fire spreads them out.
+      const gap = aiming ? 5 : 11;
+      ticks[0].style.transform = `translate(-50%, ${-gap - 9}px)`;
+      ticks[1].style.transform = `translate(-50%, ${gap}px)`;
+      ticks[2].style.transform = `translate(${-gap - 9}px, -50%)`;
+      ticks[3].style.transform = `translate(${gap}px, -50%)`;
+    },
+    setGoofy(on: boolean): void {
+      goofyTag.style.display = on ? '' : 'none';
+    },
+    setPrompt(text: string | null): void {
+      if (text !== null) prompt.textContent = text;
+      prompt.style.opacity = text === null ? '0' : '1';
+    },
+    setLookHint(show: boolean): void {
+      lookHint.style.display = show ? '' : 'none';
     },
     toast(text: string, seconds: number): void {
       toastEl.textContent = text;

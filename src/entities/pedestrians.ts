@@ -11,22 +11,24 @@ import { blockBounds, HALF_X, HALF_Z, PITCH } from '../world/cityGen';
 import { PED_SCALES } from './pedMesh';
 import { ProceduralPedRenderer, type PedRenderer } from './pedRenderer';
 
-// DECISION: the OBB half-extents below are duplicated from vehicle.ts (module
-// -private there, and that file is outside this phase's ownership) -- they
-// must match the plan's stated vehicle OBB (length 4.4, width 2.0).
-const V_HALF_LEN = 2.2;
-const V_HALF_WID = 1.0;
-const HIT_MARGIN = 0.35; // ped capsule radius, approximated as a point + margin
 const HIT_SPEED_MIN = 1.5;
 
-const INSET = 1.5; // plan: sidewalk polylines inset 1.5 m from the block edge
 const EDGE_LEN = CFG.city.blockSize - 2 * INSET;
 const RECYCLE_DIST = 250;
 const CROSS_PROB = 0.1;
 const CROSS_CHECK_RADIUS = 15;
 import { TUMBLE_TOSS, TUMBLE_LIE, TUMBLE_GETUP } from './pedPose';
+import { makeTarget, stepDown, type PedTarget } from './pedKnockdown';
+import {
+  clampInt, insetCorners, nearestCornerIndex, obbContainsPoint, sideBetween,
+  SIDE_AXIS, SIDE_DELTA, SIDE_SIGN, INSET,
+} from './pedGeometry';
 
-type PedMode = 'wander' | 'cross' | 'flee' | 'tumble';
+export type { PedTarget } from './pedKnockdown';
+
+const K = CFG.combat.knockdown;
+
+type PedMode = 'wander' | 'cross' | 'flee' | 'tumble' | 'down';
 
 /** The subset of Vehicle pedestrians react to: any moving box in the world. */
 export interface PedVehicleLike {
@@ -73,53 +75,17 @@ interface Ped {
   fleeUntil: number;
   fleeX: number;
   fleeZ: number;
+  // down: knocked over by a punch or a shot (section 8). No blood, no gore and
+  // no death -- they lie still, then get up, or are recycled if the player has
+  // long since walked away.
+  downT: number;
+  fallClip: string | null;
+  fallRate: number;
   // tumble: tossed by a hit, see stepTumble().
   tumbleT: number;
   tumbleAxis: THREE.Vector3;
   tumbleFrom: Vec2;
   tumbleTo: Vec2;
-}
-
-function clampInt(v: number, lo: number, hi: number): number {
-  return v < lo ? lo : v > hi ? hi : v;
-}
-
-function insetCorners(b: { minX: number; maxX: number; minZ: number; maxZ: number }): Vec2[] {
-  return [
-    { x: b.minX + INSET, z: b.minZ + INSET },
-    { x: b.maxX - INSET, z: b.minZ + INSET },
-    { x: b.maxX - INSET, z: b.maxZ - INSET },
-    { x: b.minX + INSET, z: b.maxZ - INSET },
-  ];
-}
-
-/** Which side of the block an edge between two corner indices runs along. */
-function sideBetween(a: number, b: number): number {
-  const lo = Math.min(a, b), hi = Math.max(a, b);
-  if (lo === 0 && hi === 1) return 0; // south (z = minZ)
-  if (lo === 1 && hi === 2) return 1; // east  (x = maxX)
-  if (lo === 2 && hi === 3) return 2; // north (z = maxZ)
-  return 3;                           // west  (x = minX)
-}
-const SIDE_DELTA: ReadonlyArray<readonly [number, number]> = [[0, -1], [1, 0], [0, 1], [-1, 0]];
-const SIDE_AXIS: readonly ('x' | 'z')[] = ['z', 'x', 'z', 'x'];
-const SIDE_SIGN: readonly number[] = [-1, 1, 1, -1];
-
-function nearestCornerIndex(corners: Vec2[], p: Vec2): number {
-  let best = 0, bestD = Infinity;
-  for (let i = 0; i < corners.length; i++) {
-    const d = Math.hypot(corners[i].x - p.x, corners[i].z - p.z);
-    if (d < bestD) { bestD = d; best = i; }
-  }
-  return best;
-}
-
-function obbContainsPoint(v: PedVehicleLike, px: number, pz: number): boolean {
-  const dx = px - v.pos.x, dz = pz - v.pos.z;
-  const fx = v.forwardX, fz = v.forwardZ, rx = fz, rz = -fx;
-  const along = dx * fx + dz * fz;
-  const across = dx * rx + dz * rz;
-  return Math.abs(along) < V_HALF_LEN + HIT_MARGIN && Math.abs(across) < V_HALF_WID + HIT_MARGIN;
 }
 
 export class PedestrianSystem implements System {
@@ -157,8 +123,10 @@ export class PedestrianSystem implements System {
   setVehicles(vehicles: readonly PedVehicleLike[]): void { this.vehicles = vehicles; }
 
   /** Read-only snapshot for the smoke suite / debug hooks. */
-  list(): Array<{ x: number; z: number; mode: PedMode; speed: number }> {
-    return this.peds.map((p) => ({ x: p.pos.x, z: p.pos.z, mode: p.mode, speed: p.speed }));
+  list(): Array<{ x: number; y: number; z: number; mode: PedMode; speed: number }> {
+    return this.peds.map((p) => ({
+      x: p.pos.x, y: p.y, z: p.pos.z, mode: p.mode, speed: p.speed,
+    }));
   }
 
   private corners(ix: number, iz: number): Vec2[] { return insetCorners(blockBounds(ix, iz)); }
@@ -175,6 +143,7 @@ export class PedestrianSystem implements System {
       crossFrom: { x: 0, z: 0 }, crossTo: { x: 0, z: 0 }, crossT: 0, crossDur: 1,
       crossIx: 0, crossIz: 0, crossCorner: 0,
       fleeUntil: 0, fleeX: 0, fleeZ: 1,
+      downT: 0, fallClip: null, fallRate: 1,
       tumbleT: 0, tumbleAxis: new THREE.Vector3(0, 1, 0), tumbleFrom: { x: 0, z: 0 }, tumbleTo: { x: 0, z: 0 },
     };
     this.syncEdgePos(p);
@@ -196,12 +165,13 @@ export class PedestrianSystem implements System {
     for (const p of this.peds) {
       if (Math.hypot(p.pos.x - player.x, p.pos.z - player.z) > RECYCLE_DIST) this.recycle(p);
 
-      if (p.mode === 'tumble') this.stepTumble(p, dt);
+      if (p.mode === 'down') stepDown(p, dt, this.playerPos(), () => this.recycle(p), () => this.resumeWander(p), this.mesh);
+      else if (p.mode === 'tumble') this.stepTumble(p, dt);
       else if (p.mode === 'flee') this.stepFlee(p, dt);
       else if (p.mode === 'cross') this.stepCross(p, dt);
       else this.stepWander(p, dt);
 
-      if (p.mode !== 'tumble') {
+      if (p.mode !== 'tumble' && p.mode !== 'down') {
         if (!this.checkHit(p)) this.checkFleeTrigger(p);
       }
       this.updatePose(p, dt);
@@ -209,7 +179,32 @@ export class PedestrianSystem implements System {
     this.mesh.commit();
   }
 
+  /**
+   * Live handles on every pedestrian, for the combat hit tests (sections 6-7).
+   *
+   * Deliberately not the whole `Ped`: a caller needs somewhere to aim and a way
+   * to knock one down, and giving it the wander state machine as well is how
+   * that state machine ends up being driven from three places.
+   */
+  targets(): PedTarget[] {
+    return this.peds.map((p) => makeTarget(p, () => this.knockDown(p)));
+  }
+
+  /** See pedKnockdown.ts; the witnesses are this system's business. */
+  private knockDown(p: Ped): void {
+    this.host.events.emit('pedHit', { x: p.pos.x, z: p.pos.z, knockdown: true });
+    for (const other of this.peds) {
+      if (other === p || other.mode === 'down' || other.mode === 'tumble') continue;
+      if (Math.hypot(other.pos.x - p.pos.x, other.pos.z - p.pos.z) > K.witnessRadius) continue;
+      this.startFlee(other, p.pos);
+    }
+  }
+
   private recycle(p: Ped): void {
+    p.mode = 'wander';
+    p.fallClip = null;
+    p.fallRate = 1;
+    p.downT = 0;
     const player = this.playerPos();
     const cix = clampInt(Math.round((player.x + HALF_X) / PITCH - 0.5), 0, CFG.city.blocksX - 1);
     const ciz = clampInt(Math.round((player.z + HALF_Z) / PITCH - 0.5), 0, CFG.city.blocksZ - 1);

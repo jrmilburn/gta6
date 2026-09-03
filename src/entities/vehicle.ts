@@ -24,7 +24,15 @@ const DETAIL_DIST = 70;
 export interface VehicleControls {
   /** -1 (brake/reverse) .. 1 (throttle). */
   throttle: number;
-  /** -1 (left) .. 1 (right). */
+  /**
+   * -1 (full left) .. 1 (full right), from the driver's seat.
+   *
+   * Worth stating, because the heading runs the other way: forward is
+   * (sin h, cos h), so a rising heading swings the nose toward +X, and +X is
+   * screen-LEFT with the chase camera sitting behind the car. `integrate`
+   * negates once on the way in so that everything above this line -- the player,
+   * the traffic AI, the wheels -- can use the obvious sense.
+   */
   steer: number;
   handbrake: boolean;
 }
@@ -207,7 +215,12 @@ export class Vehicle implements VehicleState, System, Renderable {
     // here would put the same lag on the traffic AI's already-continuous
     // steering output and drive it into the parked cars.
     const falloff = 1 - 0.65 * Math.min(1, Math.abs(this.speed) / t.maxSpeed);
-    const targetSteer = steerIn * t.steerMax * falloff;
+    // Negated, because `controls.steer` is positive to the DRIVER'S RIGHT while
+    // the heading runs the other way: forward is (sin h, cos h), so a rising
+    // heading swings the nose from +Z toward +X -- and +X is screen-left, since
+    // the chase camera sits behind the car and its right is -X. Without this,
+    // holding D turned the car the other way.
+    const targetSteer = -steerIn * t.steerMax * falloff;
     this.steer += (targetSteer - this.steer) * Math.min(1, dt * 10);
 
     if (throttle > 0) {
@@ -317,6 +330,17 @@ export class Vehicle implements VehicleState, System, Renderable {
     const payload: VehicleHitPayload = { vehicle: this, other, impact, x: this.pos.x, z: this.pos.z };
     this.host.events.emit('vehicleHit', payload);
     this.damage(impact * DAMAGE_PER_IMPACT);
+  }
+
+  /**
+   * A shove from outside the physics -- a punch (section 6). Added to the slip
+   * velocity rather than the forward speed, so a car parked across the street
+   * rocks sideways instead of setting off down the road.
+   */
+  shove(x: number, z: number): void {
+    if (this.wrecked) return;
+    this.slipVel.x += x;
+    this.slipVel.z += z;
   }
 
   damage(amount: number): void {

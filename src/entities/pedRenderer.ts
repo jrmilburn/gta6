@@ -28,6 +28,14 @@ export interface PedRenderer {
   setDance(centre: Vec2 | null, radius: number): void;
   /** How many pedestrians are dancing right now. Zero for the procedural crowd. */
   readonly dancing: number;
+  /**
+   * Pick a knockdown clip at random, or null if this renderer has none. The
+   * procedural crowd has no clips at all, so a knocked-down pedestrian there
+   * simply lies still on the spot.
+   */
+  pickFall?(): string | null;
+  /** How long a clip runs, for timing the get-up. */
+  clipDuration?(name: string): number;
   dispose(): void;
 }
 

@@ -29,7 +29,11 @@ export interface PosablePed {
   heading: number;
   speed: number;
   phase: number;
-  mode: 'wander' | 'cross' | 'flee' | 'tumble';
+  mode: 'wander' | 'cross' | 'flee' | 'tumble' | 'down';
+  /** Which fall clip a knocked-down pedestrian is playing, and how (section 8). */
+  fallClip: string | null;
+  /** Negative once they are getting back up, which plays the fall backwards. */
+  fallRate: number;
   tumbleT: number;
   tumbleAxis: THREE.Vector3;
 }

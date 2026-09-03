@@ -31,6 +31,8 @@ const HIDDEN = new THREE.Matrix4().makeScale(0, 0, 0);
 
 interface Slot {
   rig: CharacterRig;
+  /** Which fall clip this rig is currently playing, if any. */
+  falling: string | null;
   /** Which pedestrian owns this rig, as variant * 1000 + slot. Null if free. */
   owner: number | null;
   variant: number;
@@ -55,6 +57,9 @@ export class SkinnedPedRenderer implements PedRenderer {
   private readonly parts: BakedPart[];
   private readonly owned: Array<{ dispose(): void }> = [];
   private readonly host: SkinnedPedHost;
+  private readonly source: CharacterSource;
+  /** Every clip tagged as a knockdown by the converter. */
+  private readonly falls: string[];
   private readonly capacity: number;
   /** This frame's pedestrians, buffered so commit() can rank them by distance. */
   private frame: Array<{ p: PosablePed; dist: number }> = [];
@@ -64,6 +69,8 @@ export class SkinnedPedRenderer implements PedRenderer {
 
   constructor(source: CharacterSource, count: number, host: SkinnedPedHost) {
     this.host = host;
+    this.source = source;
+    this.falls = source.byRole('many').filter((n) => n.startsWith('fall'));
     this.group.name = 'pedestrians';
     this.capacity = Math.ceil(count / PED_VARIANT_COUNT);
 
@@ -111,6 +118,7 @@ export class SkinnedPedRenderer implements PedRenderer {
       this.group.add(rig.group);
       this.slots.push({
         rig, owner: null, variant: i % this.palettes.length, joinIn: 0, dancing: false,
+        falling: null,
       });
     }
   }
@@ -129,6 +137,14 @@ export class SkinnedPedRenderer implements PedRenderer {
     const cam = this.host.cameraPosition;
     this.frame.push({ p, dist: Math.hypot(p.pos.x - cam.x, p.pos.z - cam.z) });
   }
+
+  /** One of the supplied knockdown clips, at random. */
+  pickFall(): string | null {
+    if (this.falls.length === 0) return null;
+    return this.falls[Math.floor(Math.random() * this.falls.length)];
+  }
+
+  clipDuration(name: string): number { return this.source.info.get(name)?.duration ?? 2; }
 
   get dancing(): number {
     return this.slots.reduce((n, s) => n + (s.dancing ? 1 : 0), 0);
@@ -184,19 +200,26 @@ export class SkinnedPedRenderer implements PedRenderer {
     const byId = new Map<number, number>(); // pedestrian id -> distance
     for (const e of this.frame) byId.set(key(e.p), e.dist);
 
+    // A pedestrian on the ground keeps its rig however far away it is: the fall
+    // clip is the only thing holding it in that pose, and taking the skeleton
+    // away mid-knockdown would stand it back up as a static walking statue.
+    const downed = new Set(this.frame.filter((e) => e.p.mode === 'down').map((e) => key(e.p)));
     for (const slot of this.slots) {
       if (slot.owner === null) continue;
       const d = byId.get(slot.owner);
-      if (d === undefined || d > A.skinnedOut) this.release(slot);
+      const keep = downed.has(slot.owner) && d !== undefined;
+      if (!keep && (d === undefined || d > A.skinnedOut)) this.release(slot);
     }
 
     const held = new Set(this.slots.map((s) => s.owner));
     const free = this.slots.filter((s) => s.owner === null);
     if (free.length === 0) return;
 
+    // Section 8: a static pedestrian that gets shot is promoted rather than
+    // ignored, so it sorts ahead of everyone by distance.
     const candidates = this.frame
-      .filter((e) => e.dist < A.skinnedIn && !held.has(key(e.p)))
-      .sort((a, b) => a.dist - b.dist)
+      .filter((e) => (e.p.mode === 'down' || e.dist < A.skinnedIn) && !held.has(key(e.p)))
+      .sort((a, b) => (Number(b.p.mode === 'down') - Number(a.p.mode === 'down')) || (a.dist - b.dist))
       .slice(0, free.length);
 
     candidates.forEach((e, i) => {
@@ -216,6 +239,7 @@ export class SkinnedPedRenderer implements PedRenderer {
   private release(slot: Slot): void {
     slot.owner = null;
     slot.dancing = false;
+    slot.falling = null;
     slot.rig.stopDance();
     slot.rig.group.visible = false;
   }
@@ -225,6 +249,7 @@ export class SkinnedPedRenderer implements PedRenderer {
     if (!slot) return;
     const g = slot.rig.group;
 
+    this.stepFall(slot, p);
     const tumbling = tumbleQuat(p, Q);
     slot.rig.frozen = tumbling;
     let heading = p.heading;
@@ -248,6 +273,39 @@ export class SkinnedPedRenderer implements PedRenderer {
       crouch: 0,
       opacity: 1,
     });
+  }
+
+  /**
+   * Start, reverse or end the knockdown clip on this rig.
+   *
+   * The fall plays once and clamps on its last frame, which is the body lying
+   * still. The get-up is the same clip at a negative rate: the body retraces
+   * exactly the way it went down, which stands better than anything in the set
+   * and needs no extra download.
+   */
+  private stepFall(slot: Slot, p: PosablePed): void {
+    const want = p.mode === 'down' ? p.fallClip : null;
+    if (want === null) {
+      if (slot.falling) { slot.rig.oneShot.stop(); slot.falling = null; }
+      return;
+    }
+    if (slot.falling === want && Math.sign(slot.rig.oneShot.action?.timeScale ?? 1) === Math.sign(p.fallRate)) {
+      return;
+    }
+    const reversing = p.fallRate < 0;
+    slot.rig.playOneShot(want, {
+      blendIn: reversing ? 0.1 : 0.12,
+      blendOut: 0.2,
+      timeScale: p.fallRate,
+      // Held: the body stays on the last frame, face down, until it is told to
+      // get up. Without this the clip would fade out and the pedestrian would
+      // stand back into the walk cycle after two seconds.
+      hold: !reversing,
+      // Reversed, the clip has to start at its end or there is nothing behind
+      // the playhead to play.
+      from: reversing ? slot.rig.durationOf(want) - 1e-3 : 0,
+    });
+    slot.falling = want;
   }
 
   /** Returns true while this pedestrian is dancing along with the player. */

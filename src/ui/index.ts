@@ -21,6 +21,10 @@ export interface Ui extends System {
   showTitle(): void;
   /** Brief centred message, e.g. "Dance!". */
   toast(text: string, seconds: number): void;
+  setArmed(armed: boolean, aiming: boolean, shots: number): void;
+  setGoofy(on: boolean): void;
+  setPrompt(text: string | null): void;
+  setLookHint(show: boolean): void;
   showWrecked(): void;
   showBusted(): void;
   showMissionPassed(reward?: number): void;
@@ -111,6 +115,10 @@ export function createUi(game: Game, session: Session, existingScreens?: Screens
     setMinimapCheckpoint: (pos) => { checkpoint = pos; },
     showTitle: () => screens.showTitle(),
     toast: (text, seconds) => hud.toast(text, seconds),
+    setArmed: (armed, aiming, shots) => hud.setArmed(armed, aiming, shots),
+    setGoofy: (on) => hud.setGoofy(on),
+    setPrompt: (text) => hud.setPrompt(text),
+    setLookHint: (show) => hud.setLookHint(show),
     showWrecked: () => screens.showWrecked(),
     showBusted: () => screens.showBusted(),
     showMissionPassed: (reward) => screens.showMissionPassed(reward),

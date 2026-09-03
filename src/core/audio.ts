@@ -136,6 +136,70 @@ export class Audio {
     src.start();
   }
 
+  /**
+   * The air a punch moves: a short band-passed noise sweep. Every swing gets
+   * one whether or not it connects, which is what makes a miss read as a miss
+   * rather than as nothing happening.
+   */
+  whoosh(): void {
+    if (!this.ctx || !this.master) return;
+    const t = this.ctx.currentTime;
+    const dur = 0.12;
+    const buf = this.ctx.createBuffer(1, Math.ceil(this.ctx.sampleRate * dur), this.ctx.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1);
+    const src = this.ctx.createBufferSource();
+    src.buffer = buf;
+    const f = this.ctx.createBiquadFilter();
+    f.type = 'bandpass';
+    f.Q.value = 1.4;
+    // Sweeping the band up is what turns a hiss into something travelling.
+    f.frequency.setValueAtTime(500, t);
+    f.frequency.exponentialRampToValueAtTime(2600, t + dur);
+    const g = this.ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.14, t + dur * 0.35);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    src.connect(f).connect(g).connect(this.master);
+    src.start(t);
+  }
+
+  /**
+   * A pistol shot: a bright noise crack over a low thump, 0.1 s in total.
+   * Synthesised like everything else -- no audio files anywhere in this project.
+   */
+  gunshot(): void {
+    if (!this.ctx || !this.master) return;
+    const t = this.ctx.currentTime;
+    const dur = 0.1;
+    const buf = this.ctx.createBuffer(1, Math.ceil(this.ctx.sampleRate * dur), this.ctx.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < d.length; i++) {
+      const k = 1 - i / d.length;
+      d[i] = (Math.random() * 2 - 1) * k * k;
+    }
+    const src = this.ctx.createBufferSource();
+    src.buffer = buf;
+    const hp = this.ctx.createBiquadFilter();
+    hp.type = 'highpass';
+    hp.frequency.value = 900;
+    const crack = this.ctx.createGain();
+    crack.gain.value = 0.35;
+    src.connect(hp).connect(crack).connect(this.master);
+    src.start(t);
+
+    // The body of the report, which is what makes it a gun and not a hi-hat.
+    const o = this.ctx.createOscillator();
+    o.type = 'sine';
+    o.frequency.setValueAtTime(180, t);
+    o.frequency.exponentialRampToValueAtTime(55, t + 0.09);
+    const g = this.ctx.createGain();
+    g.gain.setValueAtTime(0.5, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.12);
+    o.connect(g).connect(this.master);
+    o.start(t); o.stop(t + 0.14);
+  }
+
   /** Optional 4-bar ambient loop (plan 9, "if time allows"): two chords, a slow
    * arpeggio at 90 bpm, triangle oscillators through a shared delay. Safe to
    * call repeatedly; a second call while already running is a no-op. */

@@ -4,7 +4,7 @@
 // Systems run in the plan's order: player input -> vehicles -> cameras. Later
 // phases splice traffic, pedestrians, police, missions and HUD into the gaps.
 import type { Game } from './game';
-import { Rng, SEED, param } from './rng';
+import { Rng, SEED, param, paramNum } from './rng';
 import { generateCity, type CityLayout } from '../world/cityGen';
 import { buildGround } from '../world/ground';
 import { buildBuildings } from '../world/buildings';
@@ -13,13 +13,18 @@ import { buildVegetation } from '../world/vegetation';
 import { buildStreetProps } from '../world/streetProps';
 import { buildWater } from '../world/water';
 import { Vehicle, PlayerDriver } from '../entities/vehicle';
+import { spawnVehicles, headingAt } from '../world/spawnVehicles';
 import { initCarModels } from '../entities/carModels';
 import { Player, findEnterable, exitPointFor } from '../entities/player';
 import { FOOT_CAMERA } from '../camera/footCamera';
+import { MouseLook, installPointerLock } from '../camera/mouseLook';
 import '../camera/orbitCamera';
 import { CharacterRig } from '../entities/characterRig';
 import { SkinnedPedRenderer } from '../entities/pedSkinned';
 import { DanceSystem } from '../entities/dance';
+import { CombatSystem } from '../entities/combat';
+import { WantedSystem } from '../gameplay/wanted';
+import { segmentVsAabb } from '../entities/collision';
 import { TrafficSystem } from '../entities/traffic';
 import { PedestrianSystem } from '../entities/pedestrians';
 import { CameraRig, cameraModeNames, type CameraModeName } from '../camera/cameras';
@@ -30,9 +35,7 @@ import { installEnvironment } from '../world/envMap';
 import { matchSkyToEnvironment } from '../world/sky';
 import { CFG } from '../config';
 import { makeGroundSampler } from '../world/groundHeight';
-import type { AABB, VehicleKind } from '../types';
 
-const KINDS: VehicleKind[] = ['sedan', 'sports', 'pickup'];
 /** Seconds the character takes to dissolve at a car door (feel pass 1.4). */
 const DOOR_FADE = 0.2;
 
@@ -56,6 +59,12 @@ export interface Session {
   dance: DanceSystem;
   /** The player's skinned rig, or null when running on the procedural humanoid. */
   heroRig: CharacterRig | null;
+  /** Punching and the pistol (sections 6-7). */
+  combat: CombatSystem;
+  /** Heat and stars (section 9). */
+  wanted: WantedSystem;
+  /** Where the player is looking (section 3). */
+  look: MouseLook;
 }
 
 /** Release a vehicle's controls so it decelerates naturally once the player steps out. */
@@ -65,20 +74,21 @@ function releaseControls(v: Vehicle): void {
   v.controls.handbrake = false;
 }
 
-function pickKind(): VehicleKind {
-  const want = param('car');
-  return KINDS.includes(want as VehicleKind) ? (want as VehicleKind) : 'sedan';
-}
-
-/** Face the car down the road it is parked on rather than into the kerb. */
-function headingAt(city: CityLayout, x: number, z: number): number {
-  const { lane } = city.roads.nearestLane({ x, z });
-  const a = lane.points[0];
-  const b = lane.points[lane.points.length - 1];
-  return Math.atan2(b.x - a.x, b.z - a.z);
-}
-
 export function createSession(game: Game, assets: Assets, screens?: ScreensApi): Session {
+  // Debug population overrides, applied once before anything reads them.
+  // `?peds=20&traffic=6` builds a lighter world -- which is what makes a
+  // 30-second standing-still measurement finish inside a test timeout on a
+  // software rasteriser, and what lets the frame budget be measured against a
+  // stated crowd size rather than against whatever happens to be nearby.
+  CFG.peds.count = Math.max(0, Math.round(paramNum('peds', CFG.peds.count)));
+  CFG.traffic.count = Math.max(0, Math.round(paramNum('traffic', CFG.traffic.count)));
+
+  // Mouse look is created before anything that reads a heading, and stepped
+  // first in the system order, so every consumer sees the same value all step.
+  const look = new MouseLook(game);
+  installPointerLock(game.renderer.domElement);
+  game.add(look);
+
   const city = generateCity(new Rng(SEED));
 
   // Car bodies before any Vehicle is constructed: VehicleMesh asks the registry
@@ -111,37 +121,7 @@ export function createSession(game: Game, assets: Assets, screens?: ScreensApi):
   let waterT = 0;
   game.add({ update: (dt) => { waterT += dt; water.update(waterT); } });
 
-  // One drivable car per garage, parked with real physics so they can be
-  // crashed into or stolen. The player starts on foot (phase 3) and reaches
-  // them by walking over and pressing E.
-  const vehicles: Vehicle[] = [];
-  const garages = city.spawns.garages;
-  for (let i = 0; i < garages.length; i++) {
-    const g = garages[i];
-    vehicles.push(new Vehicle(game, {
-      kind: i === 0 ? pickKind() : KINDS[i % KINDS.length],
-      pos: { x: g.x, z: g.z },
-      heading: headingAt(city, g.x, g.z),
-      colorIdx: i * 3 + 1,
-      colliders: city.colliders as AABB[],
-    }));
-  }
-  // A fresh sedan parked by the police station, for `R`'s "respawn with a
-  // fresh sedan nearby" (plan section 5) without relocating a garage car.
-  const stationSpot = city.spawns.policeStation;
-  const spareSpawn = { x: stationSpot.x + 3, z: stationSpot.z };
-  const spareCar = new Vehicle(game, {
-    kind: 'sedan',
-    pos: spareSpawn,
-    heading: headingAt(city, spareSpawn.x, spareSpawn.z),
-    colorIdx: garages.length * 3 + 1,
-    colliders: city.colliders as AABB[],
-  });
-  vehicles.push(spareCar);
-  for (const v of vehicles) {
-    v.setPeers(vehicles);
-    game.scene.add(v.group);
-  }
+  const { vehicles, spareCar, spareSpawn } = spawnVehicles(game, city);
 
   // The supplied character, if it loaded. One rig for the player; the crowd
   // gets its own pool of them (section 5). Both fall back cleanly: without a
@@ -153,12 +133,13 @@ export function createSession(game: Game, assets: Assets, screens?: ScreensApi):
     pos: city.spawns.player,
     colliders: city.colliders,
     visual: heroRig,
+    look,
     // Kerbs are real: the block slabs sit 0.15 m above the road, and the
     // boardwalk higher still. The player blends onto them (1.3) rather than
     // walking through the side of every sidewalk.
     groundHeightAt: makeGroundSampler(city),
   });
-  player.setRespawnPoint(stationSpot);
+  player.setRespawnPoint(city.spawns.policeStation);
 
   // The vehicle currently occupied by the player, or null while on foot.
   let current: Vehicle | null = null;
@@ -197,6 +178,7 @@ export function createSession(game: Game, assets: Assets, screens?: ScreensApi):
   let toastFn: (text: string, seconds: number) => void = () => {};
 
   const rig = new CameraRig(game, city.colliders);
+  rig.setLook(look);
   rig.setSubject(player);
   rig.setMode(FOOT_CAMERA);
 
@@ -204,6 +186,16 @@ export function createSession(game: Game, assets: Assets, screens?: ScreensApi):
   if (wantCam && cameraModeNames().includes(wantCam)) rig.setMode(wantCam);
 
   game.add(player);
+  // Once the mouse has been idle a moment, the on-foot camera drifts back
+  // behind the character -- but only while they are actually walking. Standing
+  // still pulls not at all, which is what keeps the look and the facing from
+  // steering each other (section 2).
+  game.add({
+    update: (dt) => {
+      if (!player.onFoot || player.faceCamera) return;
+      look.recentre(player.heading, dt, player.speed / CFG.player.walkSpeed);
+    },
+  });
   // The driver only feeds input to a vehicle while the player occupies it;
   // parked cars keep stepping their own physics via the loop below.
   game.add({ update: (dt) => { if (current) driver.update(dt); } });
@@ -221,6 +213,39 @@ export function createSession(game: Game, assets: Assets, screens?: ScreensApi):
   for (const v of allVehicles) game.addRenderable(v);
   game.addRenderable(rig);
   game.add({ update: () => { if (game.input.justPressed('camera')) rig.cycle(); } });
+
+  // Heat first, so it is listening before anything can hit anyone.
+  const wanted = new WantedSystem(game, {
+    player,
+    police: () => allVehicles.filter((v) => v.kind === 'police'),
+    // Line of sight through the same footprints the camera checks. There are no
+    // police vehicles in the world yet -- police.ts is still a stub -- so this
+    // is wired and inert rather than wired and wrong.
+    clearLine: (a, b) => !city.colliders.some((c) => segmentVsAabb(a.x, a.z, b.x, b.z, c) >= 0),
+  });
+  game.add(wanted);
+
+  const combat = new CombatSystem(game, {
+    player,
+    rig: () => heroRig,
+    look,
+    inVehicle: () => current !== null,
+    blocked: () => screens?.active === true,
+    targets: () => peds.targets(),
+    vehicles: allVehicles,
+    colliders: city.colliders,
+    kick: (radians) => rig.kickPitch(radians),
+  });
+  game.add(combat);
+
+  // P toggles the goofy run (section 5). Session-scoped, as the brief asks.
+  game.add({
+    update: () => {
+      if (!game.input.justPressed('goofy') || !heroRig) return;
+      heroRig.locomotion.goofy = !heroRig.locomotion.goofy;
+      game.events.emit('goofyChanged', { on: heroRig.locomotion.goofy });
+    },
+  });
 
   const dance = new DanceSystem(game, {
     rig: () => heroRig,
@@ -304,7 +329,7 @@ export function createSession(game: Game, assets: Assets, screens?: ScreensApi):
   });
 
   const session: Session = {
-    city, vehicles, traffic, peds, player, driver, rig, dance, heroRig,
+    city, vehicles, traffic, peds, player, driver, rig, dance, heroRig, combat, wanted, look,
     get playerVehicle() { return current; },
     // Assigned below: createUi needs the session it reads state from.
     ui: null as unknown as Ui,
@@ -314,6 +339,23 @@ export function createSession(game: Game, assets: Assets, screens?: ScreensApi):
   // other system has already settled this step.
   session.ui = createUi(game, session, screens);
   toastFn = (text, seconds) => session.ui.toast(text, seconds);
+  // The HUD reads combat and look state every frame rather than being pushed
+  // to, so nothing has to remember to tell it when a state changes.
+  game.add({
+    update: () => {
+      session.ui.setArmed(combat.armed, combat.aiming, combat.shots);
+      session.ui.setGoofy(heroRig?.locomotion.goofy === true);
+      session.ui.setLookHint(!look.locked);
+      // Tell the player there is a car to get into. Everything else in the
+      // game announces itself; a parked car three metres away did not, and a
+      // control nobody knows about is a control that does not exist.
+      session.ui.setPrompt(
+        current !== null
+          ? 'E   GET OUT'
+          : (findEnterable(allVehicles, player.pos, CFG.player.enterRadius) ? 'E   GET IN' : null),
+      );
+    },
+  });
   game.add(session.ui);
   session.ui.showTitle();
 

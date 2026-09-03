@@ -197,7 +197,10 @@ export class TrafficSystem implements System {
       throttle = 0.15;
     }
     car.controls.throttle = throttle;
-    car.controls.steer = steer;
+    // `angle` is positive toward +X and `controls.steer` is positive to the
+    // car's right, which is -X. Negating here keeps the lane-following loop
+    // pointing at its target rather than away from it.
+    car.controls.steer = -steer;
 
     if (blocked.byPlayer && car.speed < 0.5) {
       a.blockedFor += dt;
