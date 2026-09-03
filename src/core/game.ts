@@ -153,7 +153,7 @@ export class Game {
       FOCUS.y = 0;
       updateSky(this.sky, FOCUS, this.camera.position.y);
       this.post.render(this.scene, this.camera);
-      this.input.endFrame();
+      this.input.endFrame(this.paused);
     };
     requestAnimationFrame(frame);
   }

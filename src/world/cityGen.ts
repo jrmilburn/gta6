@@ -119,6 +119,24 @@ function stack(rng: Rng, base: AABB, height: number, setbacks: number): Building
   return parts;
 }
 
+/**
+ * How a block edge is laid out, measured inward from the block bounds.
+ *
+ * Everything used to sit in the same 1.3-to-1.6 m band -- streetlights, traffic
+ * lights, palms, benches, bins AND the line the pedestrians walk along -- which
+ * is why palms grew out of the middle of the pavement and people walked through
+ * them. Three lanes now, with real gaps between them.
+ *
+ *   0.0        kerb
+ *   0.9  VERGE       streetlights, traffic lights, palms
+ *   2.4  WALK        pedestrians, and nothing else
+ *   3.5  FRONTAGE    benches, bins, hydrants
+ *   4.5        building line
+ */
+export const VERGE_INSET = 0.9;
+export const WALK_INSET = 2.4;
+export const FRONTAGE_INSET = 3.5;
+
 function genBuildings(rng: Rng, block: AABB, zone: Zone): CityBuilding[] {
   const r = RULES[zone];
   const area = inset(block, C.sidewalkWidth + 1.5);
@@ -231,9 +249,10 @@ export function generateCity(rng: Rng): CityLayout {
         buildingCount++;
       }
 
-      // Streetlights and traffic-light poles ring every block.
-      perimeter(bounds, 1.3, 30, props.streetlights);
-      const corner = inset(bounds, 1.6);
+      // Streetlights and traffic-light poles ring every block, on the kerbside
+      // verge where the lamp arm can reach out over the carriageway.
+      perimeter(bounds, VERGE_INSET, 30, props.streetlights);
+      const corner = inset(bounds, VERGE_INSET);
       for (const [x, z, rot] of [
         [corner.minX, corner.minZ, Math.PI * 0.75], [corner.maxX, corner.minZ, -Math.PI * 0.75],
         [corner.maxX, corner.maxZ, -Math.PI * 0.25], [corner.minX, corner.maxZ, Math.PI * 0.25],
@@ -250,7 +269,7 @@ export function generateCity(rng: Rng): CityLayout {
 
       // Palms: dense on the beach row, scattered elsewhere.
       const palmCount = zone === 'beach' ? rng.int(6, 9) : rng.int(2, 6);
-      const edge = inset(bounds, 1.5);
+      const edge = inset(bounds, VERGE_INSET);
       for (let i = 0; i < palmCount; i++) {
         const t = rng.next();
         const onX = rng.chance(0.5);
@@ -263,13 +282,15 @@ export function generateCity(rng: Rng): CityLayout {
       if (zone === 'residential' || zone === 'beach' || isPark) {
         for (let i = 0; i < rng.int(1, 3); i++) {
           const spots: PropSpot[] = [];
-          perimeter(bounds, 1.6, 18, spots);
+          // Benches and bins go against the frontage, behind the walking line,
+          // so a bench never stands in the way of the people using it.
+          perimeter(bounds, FRONTAGE_INSET, 18, spots);
           const s = spots[rng.int(0, spots.length - 1)];
           props.benches.push({ pos: s.pos, rot: s.rot, scale: 1 });
         }
         for (let i = 0; i < rng.int(1, 2); i++) {
           const spots: PropSpot[] = [];
-          perimeter(bounds, 1.4, 22, spots);
+          perimeter(bounds, FRONTAGE_INSET, 22, spots);
           const s = spots[rng.int(0, spots.length - 1)];
           props.bins.push({ pos: s.pos, rot: 0, scale: 1 });
         }

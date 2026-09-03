@@ -224,6 +224,14 @@ export const CFG = {
       aimFov: 45,
       aimIn: 0.15,
       aimOut: 0.2,
+      /**
+       * Above this speed the gun stance gives way to running: the character
+       * turns into its stride instead of facing the camera, and the aim overlay
+       * fades to `sprintPose`. Holding a two-handed sight picture at 8 m/s
+       * looks like a bug, and no game keeps it.
+       */
+      sprintSpeed: 5.5,
+      sprintPose: 0.15,
       /** Camera kick per shot, degrees of pitch, and how long it recovers over. */
       kickDeg: 0.6,
       kickRecover: 0.15,

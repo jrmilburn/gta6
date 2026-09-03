@@ -28,7 +28,8 @@ export interface CombatHost {
 
 export interface CombatDeps {
   player: {
-    pos: Vec2; y: number; heading: number; onFoot: boolean; onGround: boolean;
+    pos: Vec2; y: number; heading: number; speed: number;
+    onFoot: boolean; onGround: boolean;
     faceCamera: boolean; speedCap: number;
   };
   rig: () => CharacterRig | null;

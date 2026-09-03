@@ -57,6 +57,19 @@ export class CombatSystem implements System, CombatState {
   /** True while a punch is mid-swing; the controller holds the player to a walk. */
   get punching(): boolean { return this.punchImpactAt >= 0 && this.host.time <= this.punchUntil; }
 
+  /**
+   * How much of the gun stance the character's own speed has taken back, 0..1.
+   *
+   * A sprint breaks the stance: the arms come down and the body turns into the
+   * stride. Aiming pins it at 0 -- if the player is holding the right button
+   * they mean to be aiming, and the speed cap keeps them slow enough for it.
+   */
+  private get sprinting(): number {
+    if (this.aiming || this.draw <= 0.02) return 0;
+    const over = this.deps.player.speed - C.pistol.sprintSpeed;
+    return THREE.MathUtils.clamp(over / Math.max(CFG.player.runSpeed - C.pistol.sprintSpeed, 0.1), 0, 1);
+  }
+
   update(dt: number): void {
     const rig = this.deps.rig();
     this.effects.update(dt);
@@ -141,7 +154,8 @@ export class CombatSystem implements System, CombatState {
       if (!loop) rig.freezeOverlay(0);
       this.poseHeld = true;
     }
-    rig.setOverlayWeight(this.draw);
+    // Fade the stance out as the character breaks into a run.
+    rig.setOverlayWeight(this.draw * (1 - this.sprinting * (1 - C.pistol.sprintPose)));
   }
 
   private stepAim(dt: number, onFoot: boolean): void {
@@ -159,11 +173,15 @@ export class CombatSystem implements System, CombatState {
    */
   private applyStance(rig: CharacterRig | null): void {
     const p = this.deps.player;
-    p.faceCamera = this.armed && p.onFoot;
+    // Facing the camera and strafing is right for a gun held ready and wrong
+    // for a sprint: nobody runs flat out sideways.
+    p.faceCamera = this.armed && p.onFoot && this.sprinting < 0.5;
     p.speedCap = this.punching || this.aiming ? C.punch.moveSpeed : Infinity;
     if (!rig) return;
-    rig.setAim(this.draw, this.deps.look.pitch);
-    rig.locomotion.armed = this.armed && this.draw > 0.5;
+    rig.setAim(this.draw * (1 - this.sprinting), this.deps.look.pitch);
+    // The aimed movement clips are strafes and back-steps; a sprint is neither,
+    // so it hands the legs back to the ordinary run.
+    rig.locomotion.armed = this.armed && this.draw > 0.5 && this.sprinting < 0.5;
 
     // Which way the character is travelling relative to where it is facing.
     // Straight ahead nearly always, because unarmed the character turns into

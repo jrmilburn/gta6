@@ -4,7 +4,7 @@
 // the shared PedMeshPool (InstancedMesh, see pedMesh.ts) so `peds.count` stays
 // cheap on draw calls regardless of count.
 import * as THREE from 'three';
-import type { EventName, System, Vec2 } from '../types';
+import type { AABB, EventName, System, Vec2 } from '../types';
 import { CFG } from '../config';
 import { Rng } from '../core/rng';
 import { blockBounds, HALF_X, HALF_Z, PITCH } from '../world/cityGen';
@@ -12,23 +12,38 @@ import { PED_SCALES } from './pedMesh';
 import { ProceduralPedRenderer, type PedRenderer } from './pedRenderer';
 
 const HIT_SPEED_MIN = 1.5;
+/** Pedestrian body radius for the building push-out, and the hash query range. */
+const PED_RADIUS = 0.35;
+const PUSH_QUERY = 8;
 
 const EDGE_LEN = CFG.city.blockSize - 2 * INSET;
 const RECYCLE_DIST = 250;
+/**
+ * How far from the player a recycled pedestrian must reappear.
+ *
+ * Recycling used to pick any block within three of the player's, which is
+ * anywhere from zero to a couple of hundred metres -- so somebody who walked out
+ * of the world 250 m behind you could reappear twenty metres in front, out of
+ * nothing. Past this distance they are a handful of pixels and the swap is
+ * invisible; the crowd LOD already turns them into a static figure at 55 m.
+ */
+const RESPAWN_MIN_DIST = 110;
 const CROSS_PROB = 0.1;
 const CROSS_CHECK_RADIUS = 15;
 import { TUMBLE_TOSS, TUMBLE_LIE, TUMBLE_GETUP } from './pedPose';
 import { makeTarget, stepDown, type PedTarget } from './pedKnockdown';
 import {
   clampInt, insetCorners, nearestCornerIndex, obbContainsPoint, sideBetween,
-  SIDE_AXIS, SIDE_DELTA, SIDE_SIGN, INSET,
+  SIDE_AXIS, SIDE_DELTA, SIDE_SIGN, INSET, nearestEdge,
 } from './pedGeometry';
+import { circleVsAabb } from './playerCollision';
+import { SpatialHash } from '../core/spatial';
 
 export type { PedTarget } from './pedKnockdown';
 
 const K = CFG.combat.knockdown;
 
-type PedMode = 'wander' | 'cross' | 'flee' | 'tumble' | 'down';
+type PedMode = 'wander' | 'cross' | 'flee' | 'tumble' | 'down' | 'return';
 
 /** The subset of Vehicle pedestrians react to: any moving box in the world. */
 export interface PedVehicleLike {
@@ -75,6 +90,11 @@ interface Ped {
   fleeUntil: number;
   fleeX: number;
   fleeZ: number;
+  // return: walking back to the pavement after a flee or a knockdown, rather
+  // than being teleported onto it.
+  returnTo: Vec2;
+  returnCorner: number;
+  returnT: number;
   // down: knocked over by a punch or a shot (section 8). No blood, no gore and
   // no death -- they lie still, then get up, or are recycled if the player has
   // long since walked away.
@@ -97,6 +117,8 @@ export class PedestrianSystem implements System {
   private readonly peds: Ped[] = [];
   private readonly rng: Rng;
   private vehicles: readonly PedVehicleLike[] = [];
+  private hash = new SpatialHash<AABB>(20);
+  private nearby: AABB[] = [];
 
   constructor(
     private readonly host: PedHost,
@@ -131,6 +153,28 @@ export class PedestrianSystem implements System {
 
   private corners(ix: number, iz: number): Vec2[] { return insetCorners(blockBounds(ix, iz)); }
 
+  /** Buildings to keep pedestrians out of. Reassignable, like the vehicles. */
+  setColliders(colliders: readonly AABB[]): void {
+    this.hash = new SpatialHash<AABB>(20);
+    for (const c of colliders) this.hash.insertAABB(c, c);
+  }
+
+  /** Shove one pedestrian out of any wall they have ended up inside. */
+  private pushOut(p: Ped): void {
+    this.nearby = this.hash.query(p.pos, PUSH_QUERY, this.nearby);
+    for (const box of this.nearby) {
+      const hit = circleVsAabb(p.pos.x, p.pos.z, PED_RADIUS, box);
+      if (!hit) continue;
+      p.pos.x += hit.nx * hit.depth;
+      p.pos.z += hit.nz * hit.depth;
+      // Run along the wall rather than into it, so a fleeing pedestrian who
+      // meets a building does not spend the rest of the panic grinding on it.
+      const along = p.fleeX * -hit.nz + p.fleeZ * hit.nx;
+      p.fleeX = -hit.nz * along;
+      p.fleeZ = hit.nx * along;
+    }
+  }
+
   private spawnPed(i: number): Ped {
     const ix = this.rng.int(0, CFG.city.blocksX - 1);
     const iz = this.rng.int(0, CFG.city.blocksZ - 1);
@@ -144,6 +188,7 @@ export class PedestrianSystem implements System {
       crossIx: 0, crossIz: 0, crossCorner: 0,
       fleeUntil: 0, fleeX: 0, fleeZ: 1,
       downT: 0, fallClip: null, fallRate: 1,
+      returnTo: { x: 0, z: 0 }, returnCorner: 0, returnT: 0,
       tumbleT: 0, tumbleAxis: new THREE.Vector3(0, 1, 0), tumbleFrom: { x: 0, z: 0 }, tumbleTo: { x: 0, z: 0 },
     };
     this.syncEdgePos(p);
@@ -165,7 +210,8 @@ export class PedestrianSystem implements System {
     for (const p of this.peds) {
       if (Math.hypot(p.pos.x - player.x, p.pos.z - player.z) > RECYCLE_DIST) this.recycle(p);
 
-      if (p.mode === 'down') stepDown(p, dt, this.playerPos(), () => this.recycle(p), () => this.resumeWander(p), this.mesh);
+      if (p.mode === 'return') this.stepReturn(p, dt);
+      else if (p.mode === 'down') stepDown(p, dt, this.playerPos(), () => this.recycle(p), () => this.resumeWander(p), this.mesh);
       else if (p.mode === 'tumble') this.stepTumble(p, dt);
       else if (p.mode === 'flee') this.stepFlee(p, dt);
       else if (p.mode === 'cross') this.stepCross(p, dt);
@@ -174,6 +220,11 @@ export class PedestrianSystem implements System {
       if (p.mode !== 'tumble' && p.mode !== 'down') {
         if (!this.checkHit(p)) this.checkFleeTrigger(p);
       }
+      if (p.mode === 'return') this.pushOut(p);
+      // The wander and crossing paths are laid out clear of the buildings, but
+      // a flee is a straight line for three seconds and a tumble is a shove, and
+      // neither asked the world whether there was a wall there.
+      if (p.mode === 'flee' || p.mode === 'tumble' || p.mode === 'down') this.pushOut(p);
       this.updatePose(p, dt);
     }
     this.mesh.commit();
@@ -208,8 +259,19 @@ export class PedestrianSystem implements System {
     const player = this.playerPos();
     const cix = clampInt(Math.round((player.x + HALF_X) / PITCH - 0.5), 0, CFG.city.blocksX - 1);
     const ciz = clampInt(Math.round((player.z + HALF_Z) / PITCH - 0.5), 0, CFG.city.blocksZ - 1);
-    p.ix = clampInt(cix + this.rng.int(-3, 3), 0, CFG.city.blocksX - 1);
-    p.iz = clampInt(ciz + this.rng.int(-3, 3), 0, CFG.city.blocksZ - 1);
+    // Take the furthest of a few candidate blocks, and stop as soon as one is
+    // comfortably out of sight.
+    let bestIx = cix, bestIz = ciz, bestD = -1;
+    for (let tries = 0; tries < 6; tries++) {
+      const ix = clampInt(cix + this.rng.int(-3, 3), 0, CFG.city.blocksX - 1);
+      const iz = clampInt(ciz + this.rng.int(-3, 3), 0, CFG.city.blocksZ - 1);
+      const b = blockBounds(ix, iz);
+      const d = Math.hypot((b.minX + b.maxX) / 2 - player.x, (b.minZ + b.maxZ) / 2 - player.z);
+      if (d > bestD) { bestD = d; bestIx = ix; bestIz = iz; }
+      if (bestD >= RESPAWN_MIN_DIST) break;
+    }
+    p.ix = bestIx;
+    p.iz = bestIz;
     p.corner = this.rng.int(0, 3);
     p.dir = this.rng.chance(0.5) ? 1 : -1;
     p.edgeT = this.rng.next();
@@ -320,13 +382,52 @@ export class PedestrianSystem implements System {
     if (this.host.time >= p.fleeUntil) this.resumeWander(p);
   }
 
+  /**
+   * Send a pedestrian back to the pavement from wherever they finished running.
+   *
+   * They WALK back rather than being put back. The wander path is a position
+   * computed from an edge parameter, so anyone standing off it has to be moved
+   * onto it somehow -- and doing that in one frame is a teleport. Snapping to
+   * the nearest corner moved them up to half a block; snapping to the nearest
+   * point on the perimeter still moved them up to 18 m, measured, when they had
+   * fled into the middle of one. So they aim for the nearest point and take the
+   * time to get there, which is what a person would do.
+   */
   private resumeWander(p: Ped): void {
     const ix = clampInt(Math.round((p.pos.x + HALF_X) / PITCH - 0.5), 0, CFG.city.blocksX - 1);
     const iz = clampInt(Math.round((p.pos.z + HALF_Z) / PITCH - 0.5), 0, CFG.city.blocksZ - 1);
     p.ix = ix; p.iz = iz;
-    p.corner = nearestCornerIndex(this.corners(ix, iz), p.pos);
-    p.dir = this.rng.chance(0.5) ? 1 : -1;
-    p.edgeT = 0;
+    const cs = this.corners(ix, iz);
+    const near = nearestEdge(cs, p.pos);
+    const a = cs[near.corner], b = cs[(near.corner + 1) % 4];
+    p.returnTo = { x: a.x + (b.x - a.x) * near.t, z: a.z + (b.z - a.z) * near.t };
+    p.returnCorner = near.corner;
+    p.returnT = near.t;
+    // Already there, near enough: rejoin without the walk.
+    if (Math.hypot(p.returnTo.x - p.pos.x, p.returnTo.z - p.pos.z) < 0.4) {
+      this.joinPath(p);
+      return;
+    }
+    p.mode = 'return';
+  }
+
+  /** Walk toward the pavement; rejoin the wander path on arrival. */
+  private stepReturn(p: Ped, dt: number): void {
+    p.speed = CFG.peds.walkSpeed;
+    const dx = p.returnTo.x - p.pos.x, dz = p.returnTo.z - p.pos.z;
+    const d = Math.hypot(dx, dz);
+    if (d < 0.25) { this.joinPath(p); return; }
+    p.heading = Math.atan2(dx, dz);
+    const step = Math.min(d, CFG.peds.walkSpeed * dt);
+    p.pos.x += (dx / d) * step;
+    p.pos.z += (dz / d) * step;
+  }
+
+  /** Adopt the edge they walked back to and carry on wandering. */
+  private joinPath(p: Ped): void {
+    p.corner = p.returnCorner;
+    p.dir = 1;
+    p.edgeT = p.returnT;
     p.mode = 'wander';
     this.syncEdgePos(p);
   }

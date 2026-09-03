@@ -34,7 +34,6 @@ const BINDINGS: Record<Action, string[]> = {
 export class Input {
   private down = new Set<string>();
   private pressed = new Set<string>();
-  private consumed = false;
   /** Set by scripted sequences (showcase) to override the human. */
   scripted: Partial<Record<Action, number>> | null = null;
   /**
@@ -138,21 +137,28 @@ export class Input {
     this.pressed.clear();
     this.mouse.leftPressed = false;
     this.mouse.rightPressed = false;
-    this.consumed = true;
   }
 
   /**
-   * Called once per rendered frame. Only clears presses that no physics step
-   * consumed -- while paused no steps run at all, and without this a tap would
-   * linger and re-fire every frame.
+   * Called once per rendered frame.
+   *
+   * A press that no physics step has seen yet is KEPT, and that is the whole
+   * point. The simulation runs at a fixed 60 Hz while frames come as fast as
+   * the display allows, so on anything above 60 Hz most frames run no step at
+   * all -- and this used to throw the press away on every one of them. Roughly
+   * half of all key presses were silently discarded on a 144 Hz monitor, which
+   * is why G and H so often needed pressing twice.
+   *
+   * Presses are still dropped while PAUSED, which is the case the old clear was
+   * actually written for: no steps run at all then, so without this a tap would
+   * linger and fire the instant the game resumed.
    */
-  endFrame(): void {
-    if (!this.consumed) {
+  endFrame(paused: boolean): void {
+    if (paused) {
       this.pressed.clear();
       this.mouse.leftPressed = false;
       this.mouse.rightPressed = false;
     }
-    this.consumed = false;
     this.mouse.dx = 0;
     this.mouse.dy = 0;
   }

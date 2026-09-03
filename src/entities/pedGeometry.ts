@@ -6,9 +6,14 @@
 // is long enough without them.
 import type { PedVehicleLike } from './pedestrians';
 import type { Vec2 } from '../types';
+import { WALK_INSET } from '../world/cityGen';
 
-/** The plan's sidewalk polylines are inset this far from the block edge. */
-export const INSET = 1.5;
+/**
+ * The line pedestrians walk along, taken from the city's own layout rather than
+ * repeated here -- the two drifting apart is how people ended up walking through
+ * the palm trees.
+ */
+export const INSET = WALK_INSET;
 // DECISION: the OBB half-extents below are duplicated from vehicle.ts (they are
 // module-private there) and must match the plan's stated vehicle OBB, 4.4 long
 // by 2.0 wide.
@@ -41,6 +46,31 @@ export function sideBetween(a: number, b: number): number {
 export const SIDE_DELTA: ReadonlyArray<readonly [number, number]> = [[0, -1], [1, 0], [0, 1], [-1, 0]];
 export const SIDE_AXIS: readonly ('x' | 'z')[] = ['z', 'x', 'z', 'x'];
 export const SIDE_SIGN: readonly number[] = [-1, 1, 1, -1];
+
+/**
+ * The closest point on the block's inset perimeter, as the edge it lies on and
+ * how far along that edge it is.
+ *
+ * Used to put a pedestrian back on the pavement without moving them. Snapping
+ * to the nearest CORNER instead -- which is what this replaced -- teleported
+ * anyone who had just finished fleeing up to half a block sideways, which from
+ * the outside looks exactly like a pedestrian vanishing and another appearing.
+ */
+export function nearestEdge(corners: Vec2[], p: Vec2): { corner: number; t: number } {
+  let best = { corner: 0, t: 0 };
+  let bestD = Infinity;
+  for (let i = 0; i < 4; i++) {
+    const a = corners[i], b = corners[(i + 1) % 4];
+    const ex = b.x - a.x, ez = b.z - a.z;
+    const len2 = ex * ex + ez * ez;
+    const t = len2 > 1e-6
+      ? Math.max(0, Math.min(1, ((p.x - a.x) * ex + (p.z - a.z) * ez) / len2))
+      : 0;
+    const d = Math.hypot(a.x + ex * t - p.x, a.z + ez * t - p.z);
+    if (d < bestD) { bestD = d; best = { corner: i, t }; }
+  }
+  return best;
+}
 
 export function nearestCornerIndex(corners: Vec2[], p: Vec2): number {
   let best = 0, bestD = Infinity;
