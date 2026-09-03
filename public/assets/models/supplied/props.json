@@ -1,0 +1,71 @@
+{
+  "props": {
+    "palm": {
+      "near": {
+        "file": "palm.glb",
+        "bytes": 238968,
+        "tris": 3461
+      },
+      "fit": {
+        "scale": 0.3245,
+        "height": 7.4,
+        "width": 3.86,
+        "depth": 3.77,
+        "reach": {
+          "x": 1.01,
+          "z": 0.13
+        }
+      }
+    },
+    "streetlight": {
+      "file": "streetlight.glb",
+      "bytes": 11996,
+      "tris": 82,
+      "fit": {
+        "scale": 0.2924,
+        "height": 7,
+        "width": 0.73,
+        "depth": 2.82,
+        "reach": {
+          "x": 0,
+          "z": 2.1
+        }
+      }
+    },
+    "streetlight-double": {
+      "file": "streetlight-double.glb",
+      "bytes": 13132,
+      "tris": 98,
+      "fit": {
+        "scale": 0.2924,
+        "height": 7,
+        "width": 2.89,
+        "depth": 4.16,
+        "reach": {
+          "x": 0,
+          "z": 0
+        }
+      }
+    },
+    "traffic-light": {
+      "file": "traffic-light.glb",
+      "bytes": 316280,
+      "tris": 2574,
+      "fit": {
+        "scale": 1.116,
+        "height": 3.6,
+        "width": 0.21,
+        "depth": 0.41,
+        "reach": {
+          "x": -0.01,
+          "z": 0.08
+        }
+      },
+      "forward": {
+        "x": 0.99999998476065,
+        "z": -0.00017458149976823508
+      }
+    }
+  },
+  "generated": "2026-09-03"
+}

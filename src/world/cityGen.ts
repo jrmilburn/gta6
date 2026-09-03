@@ -44,10 +44,22 @@ export interface CityBuilding extends BuildingDef {
   policeStation: boolean;
 }
 
+/**
+ * A prop placement. `rot` is the yaw of the prop's local +Z, which every prop
+ * treats as its business end: a lamp's arm reaches along it, a signal's lenses
+ * face along it.
+ */
 export interface PropSpot { pos: Vec2; rot: number; scale: number }
+/** A traffic light, plus which intersection approach it controls. */
+export interface SignalSpot extends PropSpot {
+  /** Road-graph node id of the intersection. */
+  node: number;
+  /** The road axis the controlled approach travels along. */
+  axis: 'x' | 'z';
+}
 export interface PropSpots {
   streetlights: PropSpot[];
-  trafficLights: PropSpot[];
+  trafficLights: SignalSpot[];
   palms: PropSpot[];
   benches: PropSpot[];
   bins: PropSpot[];
@@ -252,12 +264,21 @@ export function generateCity(rng: Rng): CityLayout {
       // Streetlights and traffic-light poles ring every block, on the kerbside
       // verge where the lamp arm can reach out over the carriageway.
       perimeter(bounds, VERGE_INSET, 30, props.streetlights);
+      // One signal per corner, a near-side post on the driver's right. With
+      // right-hand traffic a car heading +X keeps to the +Z side of its road,
+      // so the corner at (maxX, minZ) is the one it pulls up beside, and that
+      // signal faces back along -X at the cars arriving. The other three
+      // corners follow by turning the picture a quarter at a time.
       const corner = inset(bounds, VERGE_INSET);
-      for (const [x, z, rot] of [
-        [corner.minX, corner.minZ, Math.PI * 0.75], [corner.maxX, corner.minZ, -Math.PI * 0.75],
-        [corner.maxX, corner.maxZ, -Math.PI * 0.25], [corner.minX, corner.maxZ, Math.PI * 0.25],
+      const NX = C.blocksX + 1;
+      const nodeId = (nx: number, nz: number): number => nz * NX + nx;
+      for (const [x, z, rot, node, axis] of [
+        [corner.maxX, corner.minZ, -Math.PI / 2, nodeId(ix + 1, iz), 'x'],
+        [corner.maxX, corner.maxZ, Math.PI, nodeId(ix + 1, iz + 1), 'z'],
+        [corner.minX, corner.maxZ, Math.PI / 2, nodeId(ix, iz + 1), 'x'],
+        [corner.minX, corner.minZ, 0, nodeId(ix, iz), 'z'],
       ] as const) {
-        props.trafficLights.push({ pos: { x, z }, rot, scale: 1 });
+        props.trafficLights.push({ pos: { x, z }, rot, scale: 1, node, axis });
       }
 
       if (isPark) {

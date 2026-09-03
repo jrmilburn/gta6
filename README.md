@@ -56,6 +56,7 @@ pnpm smoke     # Playwright smoke suite; screenshots land in screens/
 pnpm assets:fetch       # re-download the CC0 world assets from source
 pnpm assets:character   # convert raw/*.fbx to a skinned hero and its clips
 pnpm assets:cars        # convert raw/<kind>/*.fbx to game-ready car bodies
+pnpm assets:props       # convert raw/{palm,streetlight,traffic-light}/ to instanced props
 node scripts/fetch-props.mjs   # Poly Haven street furniture
 ```
 

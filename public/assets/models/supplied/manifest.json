@@ -3,10 +3,11 @@
     {
       "kind": "sedan",
       "file": "sedan.glb",
-      "bytes": 846892,
-      "tris": 23832,
+      "bytes": 833452,
+      "tris": 23999,
       "sourceTris": 65416,
       "maps": "color+normal+rough+metal",
+      "atlasFragmentation": 0.059,
       "fit": {
         "scale": 2.3178341317889952,
         "rotated": true,
@@ -18,10 +19,11 @@
     {
       "kind": "sports",
       "file": "sports.glb",
-      "bytes": 1398976,
-      "tris": 23994,
+      "bytes": 1167372,
+      "tris": 23999,
       "sourceTris": 551067,
       "maps": "color+normal+rough+metal",
+      "atlasFragmentation": 0.056,
       "fit": {
         "scale": 2.317378684878441,
         "rotated": true,

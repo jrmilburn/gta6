@@ -88,6 +88,7 @@ function modelChassis(data: CarModelData, kind: VehicleKind, color: number, hero
       ? new THREE.MeshPhysicalMaterial({
         map: m.map, normalMap: m.normalMap, metalnessMap: m.metalnessMap,
         roughnessMap: m.roughnessMap, metalness: m.metalness, roughness: m.roughness,
+        vertexColors: m.vertexColors,
         clearcoat: 0.85, clearcoatRoughness: 0.12,
       })
       : m;

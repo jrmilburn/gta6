@@ -42,7 +42,7 @@ export function setup(game: Game): void {
   const t1 = performance.now();
   game.scene.add(buildGround(city));
   game.scene.add(buildBuildings(city));
-  game.scene.add(buildProps(city));
+  game.scene.add(buildProps(city).group);
 
   const water = buildWater(game.sky.sunDir);
   game.scene.add(water.mesh);

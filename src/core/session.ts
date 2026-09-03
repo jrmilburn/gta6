@@ -9,7 +9,7 @@ import { Rng, SEED, param, paramNum } from './rng';
 import { generateCity, type CityLayout } from '../world/cityGen';
 import { buildGround } from '../world/ground';
 import { buildBuildings } from '../world/buildings';
-import { buildProps } from '../world/props';
+import { buildProps, type PropsBuild } from '../world/props';
 import { buildVegetation } from '../world/vegetation';
 import { buildStreetProps } from '../world/streetProps';
 import { buildWater } from '../world/water';
@@ -62,6 +62,8 @@ export interface Session {
   intro: IntroFlight;
   /** Police response, sized by the wanted level. */
   police: PoliceSystem;
+  /** Street furniture, and the traffic-light lenses the signal system drives. */
+  props: PropsBuild;
   /** `G`: eight seconds of the dance clip, orbit camera and a crowd. */
   dance: DanceSystem;
   /** The player's skinned rig, or null when running on the procedural humanoid. */
@@ -119,7 +121,8 @@ export function createSession(game: Game, assets: Assets, screens?: ScreensApi):
 
   game.scene.add(buildGround(city, assets));
   game.scene.add(buildBuildings(city, assets));
-  game.scene.add(buildProps(city, assets, vegetation.active));
+  const props = buildProps(city, assets, vegetation.active, game.timeOfDay === 'dusk');
+  game.scene.add(props.group);
   const street = buildStreetProps(city, assets);
   if (street) game.scene.add(street);
 
@@ -390,7 +393,7 @@ export function createSession(game: Game, assets: Assets, screens?: ScreensApi):
 
   const session: Session = {
     city, vehicles, traffic, peds, player, driver, rig, dance, heroRig, combat, wanted, look,
-    intro, police,
+    intro, police, props,
     get playerVehicle() { return current; },
     // Assigned below: createUi needs the session it reads state from.
     ui: null as unknown as Ui,

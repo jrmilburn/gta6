@@ -21,6 +21,9 @@ importers:
       fbx2gltf:
         specifier: 0.9.7-p1
         version: 0.9.7-p1
+      meshoptimizer:
+        specifier: 0.22.0
+        version: 0.22.0
       typescript:
         specifier: ^5.6.3
         version: 5.9.3
@@ -369,6 +372,9 @@ packages:
   meshoptimizer@0.18.1:
     resolution: {integrity: sha512-ZhoIoL7TNV4s5B6+rx5mC//fw8/POGyNxS/DZyCJeiZ12ScLfVwRE/GfsxwiTkMYYD5DmK2/JXnEVXqL4rF+Sw==}
 
+  meshoptimizer@0.22.0:
+    resolution: {integrity: sha512-IebiK79sqIy+E4EgOr+CAw+Ke8hAspXKzBd0JdgEmPHiAwmvEj2S4h1rfvo+o/BnfEYd/jAOg5IeeIjzlzSnDg==}
+
   minimatch@3.1.5:
     resolution: {integrity: sha512-VgjWUsnnT6n+NUk6eZq77zeFdpW2LWDzP6zFGrCbHXiYNul5Dzqk2HHQ5uFH2DNW5Xbp8+jVzaeNt94ssEEl4w==}
 
@@ -695,6 +701,8 @@ snapshots:
   inherits@2.0.4: {}
 
   meshoptimizer@0.18.1: {}
+
+  meshoptimizer@0.22.0: {}
 
   minimatch@3.1.5:
     dependencies:

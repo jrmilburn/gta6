@@ -43,39 +43,88 @@ function readPixels(texture: THREE.Texture, size: number): ImageData | null {
 export function basePaintColor(map: THREE.Texture): THREE.Color | null {
   const src = readPixels(map, SAMPLE_SIZE);
   if (!src) return null;
-  const bins = new Map<number, number>();
-  const d = src.data;
-  for (let i = 0; i < d.length; i += 4) {
-    const lum = (d[i] + d[i + 1] + d[i + 2]) / 765;
+  return modalColor(src.data, 4, false);
+}
+
+/**
+ * The same, read off a vertex-colour attribute for a car whose albedo was
+ * baked at conversion (see scripts/convert-cars.mjs). COLOR_0 is linear;
+ * the mode is taken in sRGB so the same 5-bit bins mean the same thing.
+ */
+export function basePaintFromVertices(geometry: THREE.BufferGeometry): THREE.Color | null {
+  const attr = geometry.getAttribute('color');
+  if (!attr) return null;
+  return modalColor(attr.array as ArrayLike<number>, attr.itemSize, true);
+}
+
+const SRGB = new THREE.Color();
+/**
+ * The modal colour of a sheet of pixels, preferring a SATURATED mode.
+ *
+ * A generated albedo is mostly filler: the dark grey between its islands, the
+ * near-black of tyres, sills and vents. Counted naively, that grey wins, and a
+ * hue rotation keyed off grey turns every dark part of the car the target
+ * colour and the actual paint something else. So the mode is taken among the
+ * pixels with real saturation first, and the plain mode is only the fallback
+ * for a car that genuinely is white, grey or black.
+ */
+function modalColor(data: ArrayLike<number>, stride: number, linearUnit: boolean): THREE.Color | null {
+  const all = new Map<number, number>();
+  const vivid = new Map<number, number>();
+  let samples = 0;
+  for (let i = 0; i < data.length; i += stride) {
+    let r = data[i], g = data[i + 1], b = data[i + 2];
+    if (linearUnit) {
+      SRGB.setRGB(r, g, b).convertLinearToSRGB();
+      r = SRGB.r * 255; g = SRGB.g * 255; b = SRGB.b * 255;
+    }
+    const max = Math.max(r, g, b), min = Math.min(r, g, b);
+    const lum = (r + g + b) / 765;
     if (lum < 0.08 || lum > 0.95) continue;
-    const key = ((d[i] >> 3) << 10) | ((d[i + 1] >> 3) << 5) | (d[i + 2] >> 3);
-    bins.set(key, (bins.get(key) ?? 0) + 1);
+    samples++;
+    const key = ((r >> 3) << 10) | ((g >> 3) << 5) | (b >> 3);
+    all.set(key, (all.get(key) ?? 0) + 1);
+    if (max > 0 && (max - min) / max > 0.35) vivid.set(key, (vivid.get(key) ?? 0) + 1);
   }
-  let best = -1, bestCount = 0;
-  for (const [key, count] of bins) if (count > bestCount) { bestCount = count; best = key; }
+  const mode = (bins: Map<number, number>): [number, number] => {
+    let best = -1, bestCount = 0;
+    for (const [key, count] of bins) if (count > bestCount) { bestCount = count; best = key; }
+    return [best, bestCount];
+  };
+  let vividTotal = 0;
+  for (const c of vivid.values()) vividTotal += c;
+  // Saturated paint has to be a real share of the sheet to count as the paint.
+  const [vKey] = mode(vivid);
+  const [aKey] = mode(all);
+  const best = samples > 0 && vividTotal / samples > 0.08 && vKey >= 0 ? vKey : aKey;
   if (best < 0) return null;
   return new THREE.Color(((best >> 10) & 31) / 31, ((best >> 5) & 31) / 31, (best & 31) / 31);
 }
 
 /**
- * Repaint a textured car by remapping the whole albedo in HSV.
+ * Repaint a textured car by remapping its albedo in HSV.
  *
- * DECISION: no paint mask. The first version of this built one, by finding the
- * pixels close to the car's own paint and recolouring those -- and it mottled,
- * because a generated albedo carries grime, panel gaps and baked reflections
- * that swing any per-pixel colour test back and forth across its threshold, so
- * the "paint" crawled over the bodywork in patches.
+ * Hue is rotated by the difference between the car's own paint and the colour
+ * this car wants, and saturation and lightness are scaled by the same ratio,
+ * so every crease, reflection and smear keeps its exact relative shading.
  *
- * An HSV remap needs no test at all. Hue is rotated by the difference between
- * the car's own paint and the colour this car wants, and saturation and value
- * are scaled by the same ratio. Every crease, reflection and smear keeps its
- * exact relative shading, and the parts that were never painted look after
- * themselves: glass, tyres and chrome have no saturation to rotate, so a hue
- * shift moves them not at all.
+ * DECISION: a SOFT mask on hue and saturation, not a hard one and not none.
+ * The first version had a hard per-pixel test and mottled, because a generated
+ * albedo carries grime and baked reflections that swing any threshold back and
+ * forth across the bodywork. The second had no mask at all, which was smooth --
+ * and turned every tyre, window and splitter maroon, because "black" on a
+ * generated sheet is a very dark orange, and a 4x saturation ratio makes that
+ * a colour. The weight below is 1 for a pixel that is clearly the paint (near
+ * its hue, reasonably saturated), 0 for chrome, glass and rubber, and ramps
+ * between over a wide enough band that no edge of it is visible.
  */
 export function repaint(
   material: THREE.Material, base: THREE.Color, target: THREE.Color,
 ): { value: THREE.Vector3 } {
+  // A baked car carries its albedo in COLOR_0, which the shader multiplies in
+  // one include later than the map. The remap goes wherever the colour is.
+  const std = material as THREE.MeshStandardMaterial;
+  const hook = std.map ? '#include <map_fragment>' : '#include <color_fragment>';
   const from = { h: 0, s: 0, l: 0 };
   const to = { h: 0, s: 0, l: 0 };
   base.getHSL(from);
@@ -89,13 +138,22 @@ export function repaint(
       Math.min(3, to.l / Math.max(from.l, 0.05)),
     ),
   };
+  // The paint's own hue in the shader's linear space, for the mask. The base
+  // was read in sRGB; hue barely moves between the two, saturation does, so
+  // only the hue is used from here.
+  const linearBase = base.clone().convertSRGBToLinear();
+  const lb = { h: 0, s: 0, l: 0 };
+  linearBase.getHSL(lb);
+  const baseHsv = { value: new THREE.Vector3(lb.h, lb.s, lb.l) };
   const prev = material.onBeforeCompile.bind(material);
   material.onBeforeCompile = (shader, renderer) => {
     prev(shader, renderer);
     shader.uniforms.carPaint = uniform;
+    shader.uniforms.carBase = baseHsv;
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <common>', `#include <common>
         uniform vec3 carPaint;
+        uniform vec3 carBase;
         vec3 carRgb2Hsv( vec3 c ) {
           vec4 K = vec4( 0.0, -1.0 / 3.0, 2.0 / 3.0, -1.0 );
           vec4 p = mix( vec4( c.bg, K.wz ), vec4( c.gb, K.xy ), step( c.b, c.g ) );
@@ -109,12 +167,18 @@ export function repaint(
           vec3 p = abs( fract( c.xxx + K.xyz ) * 6.0 - K.www );
           return c.z * mix( K.xxx, clamp( p - K.xxx, 0.0, 1.0 ), c.y );
         }`)
-      .replace('#include <map_fragment>', `#include <map_fragment>
+      .replace(hook, `${hook}
         vec3 carHsv = carRgb2Hsv( diffuseColor.rgb );
-        carHsv.x = fract( carHsv.x + carPaint.x );
-        carHsv.y = clamp( carHsv.y * carPaint.y, 0.0, 1.0 );
-        carHsv.z = clamp( carHsv.z * carPaint.z, 0.0, 1.0 );
-        diffuseColor.rgb = carHsv2Rgb( carHsv );`);
+        float carHueD = abs( carHsv.x - carBase.x );
+        carHueD = min( carHueD, 1.0 - carHueD );
+        float carW = ( 1.0 - smoothstep( 0.06, 0.16, carHueD ) )
+          * smoothstep( 0.12, 0.35, carHsv.y )
+          * smoothstep( 0.04, 0.12, carHsv.z );
+        vec3 carNew = carHsv;
+        carNew.x = fract( carNew.x + carPaint.x );
+        carNew.y = clamp( carNew.y * carPaint.y, 0.0, 1.0 );
+        carNew.z = clamp( carNew.z * carPaint.z, 0.0, 1.0 );
+        diffuseColor.rgb = mix( diffuseColor.rgb, carHsv2Rgb( carNew ), carW );`);
   };
   material.needsUpdate = true;
   return uniform;
@@ -161,7 +225,7 @@ export function prepareSupplied(assets: Assets, model: SuppliedCar): CarModelDat
     wheels: [],
     wheelRadius,
     texturedMaterial: material,
-    basePaint: material.map ? basePaintColor(material.map) : null,
+    basePaint: material.map ? basePaintColor(material.map) : basePaintFromVertices(geometry),
     // The model's own texture already has headlights and tail lights painted
     // into it; the emissive boxes the kit cars need would sit proud of the
     // bodywork here. Only the brake glow is kept, and only because it is

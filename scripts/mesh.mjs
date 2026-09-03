@@ -137,6 +137,8 @@ export function packGlb(mesh, images, name = 'Model') {
   const big = count > 65535;
   const indexArray = big ? new Uint32Array(mesh.idx) : new Uint16Array(mesh.idx);
   const idxView = push(Buffer.from(indexArray.buffer), { target: 34963 });
+  const hasCol = Array.isArray(mesh.col);
+  const colView = hasCol ? floats(mesh.col) : -1;
   const e = extents(mesh.pos);
 
   const json = {
@@ -147,7 +149,7 @@ export function packGlb(mesh, images, name = 'Model') {
     meshes: [{
       name,
       primitives: [{
-        attributes: { POSITION: 0, NORMAL: 1, TEXCOORD_0: 2 },
+        attributes: { POSITION: 0, NORMAL: 1, TEXCOORD_0: 2, ...(hasCol ? { COLOR_0: 4 } : {}) },
         indices: 3,
         material: 0,
       }],
@@ -157,6 +159,7 @@ export function packGlb(mesh, images, name = 'Model') {
       { bufferView: nrmView, componentType: 5126, count, type: 'VEC3' },
       { bufferView: uvView, componentType: 5126, count, type: 'VEC2' },
       { bufferView: idxView, componentType: big ? 5125 : 5123, count: mesh.idx.length, type: 'SCALAR' },
+      ...(hasCol ? [{ bufferView: colView, componentType: 5126, count, type: 'VEC3' }] : []),
     ],
     bufferViews,
     buffers: [{ byteLength: 0 }],
@@ -345,4 +348,346 @@ function weld(mesh, cell) {
     pos[v * 3 + 2] = pos[a * 3 + 2];
   }
   return { pos, nrm, uv, idx };
+}
+
+// --- multi-material props ------------------------------------------------------
+// The car path above collapses a model to one material because a Meshy export
+// has one. A palm has a trunk and fronds, a lamp has concrete, metal and a lit
+// lens, and a traffic light needs each lens on its own material so the game can
+// light one at a time -- so these keep the material split all the way through.
+
+/**
+ * Like `flatten`, but one mesh per glTF material, keyed by material name.
+ * Returns `[{ name, mesh: { pos, nrm, uv, idx } }]` in first-seen order.
+ */
+export function flattenByMaterial(json, bin, keep = null) {
+  const parts = new Map();
+  const walk = (nodeIndex, parent) => {
+    const node = json.nodes[nodeIndex];
+    const world = multiply(parent, nodeMatrix(node));
+    if (node.mesh !== undefined && (!keep || keep(node.name ?? ''))) {
+      for (const prim of json.meshes[node.mesh].primitives) {
+        const name = json.materials?.[prim.material]?.name ?? `material${prim.material ?? 0}`;
+        let part = parts.get(name);
+        if (!part) { part = { pos: [], nrm: [], uv: [], idx: [] }; parts.set(name, part); }
+        const base = part.pos.length / 3;
+        const p = readAccessor(json, bin, prim.attributes.POSITION);
+        const n = prim.attributes.NORMAL !== undefined ? readAccessor(json, bin, prim.attributes.NORMAL) : null;
+        const t = prim.attributes.TEXCOORD_0 !== undefined ? readAccessor(json, bin, prim.attributes.TEXCOORD_0) : null;
+        for (let i = 0; i < p.count; i++) {
+          const x = p.data[i * 3], y = p.data[i * 3 + 1], z = p.data[i * 3 + 2];
+          part.pos.push(
+            world[0] * x + world[1] * y + world[2] * z + world[3],
+            world[4] * x + world[5] * y + world[6] * z + world[7],
+            world[8] * x + world[9] * y + world[10] * z + world[11],
+          );
+          const nx = n ? n.data[i * 3] : 0, ny = n ? n.data[i * 3 + 1] : 1, nz = n ? n.data[i * 3 + 2] : 0;
+          part.nrm.push(
+            world[0] * nx + world[1] * ny + world[2] * nz,
+            world[4] * nx + world[5] * ny + world[6] * nz,
+            world[8] * nx + world[9] * ny + world[10] * nz,
+          );
+          part.uv.push(t ? t.data[i * 2] : 0, t ? t.data[i * 2 + 1] : 0);
+        }
+        if (prim.indices !== undefined) {
+          const ind = readAccessor(json, bin, prim.indices);
+          for (let i = 0; i < ind.count; i++) part.idx.push(base + ind.data[i]);
+        } else {
+          for (let i = 0; i < p.count; i++) part.idx.push(base + i);
+        }
+      }
+    }
+    for (const child of node.children ?? []) walk(child, world);
+  };
+  for (const root of json.scenes[json.scene ?? 0].nodes) walk(root, identity());
+  return [...parts].map(([name, mesh]) => ({ name, mesh }));
+}
+
+/** Extents over several parts at once. */
+export function extentsOf(parts) {
+  const min = [Infinity, Infinity, Infinity], max = [-Infinity, -Infinity, -Infinity];
+  for (const { mesh } of parts) {
+    if (mesh.pos.length === 0) continue;
+    const e = extents(mesh.pos);
+    for (let a = 0; a < 3; a++) { min[a] = Math.min(min[a], e.min[a]); max[a] = Math.max(max[a], e.max[a]); }
+  }
+  return { min, max, size: [max[0] - min[0], max[1] - min[1], max[2] - min[2]] };
+}
+
+/** Centroid (x, z) of the vertices in a horizontal slice of the model. */
+function sliceCentroid(parts, y0, y1) {
+  let sx = 0, sz = 0, n = 0;
+  for (const { mesh } of parts) {
+    const p = mesh.pos;
+    for (let i = 0; i < p.length; i += 3) {
+      if (p[i + 1] >= y0 && p[i + 1] <= y1) { sx += p[i]; sz += p[i + 2]; n++; }
+    }
+  }
+  return n ? { x: sx / n, z: sz / n } : { x: 0, z: 0 };
+}
+
+/**
+ * Stand a tall prop upright on the game's axes.
+ *
+ * Y is trusted as up (the three supplied props all convert Y-up; a model that
+ * arrives Z-up is visibly on its side in the printed extents, which is the
+ * check). The model is scaled so its height is `targetHeight`, its BASE -- the
+ * bottom slice of the mesh, not the bounding box centre, so a leaning palm or
+ * a cantilevered lamp still stands on its own foot -- goes to the origin, and
+ * it is yawed so `forward` lands on +Z. `forward` is either an explicit unit
+ * vector `{ x, z }` or `'head'`, meaning the direction from the base to the
+ * centroid of the top of the model: for a lamp post that is the arm, and the
+ * game hangs the arm out over the road along local +Z.
+ */
+export function fitUpright(parts, targetHeight, forward = 'head') {
+  const e = extentsOf(parts);
+  const scale = targetHeight / Math.max(e.size[1], 1e-9);
+  const base = sliceCentroid(parts, e.min[1], e.min[1] + e.size[1] * 0.03);
+  const head = sliceCentroid(parts, e.max[1] - e.size[1] * 0.12, e.max[1]);
+  const fwd = forward === 'head' ? { x: head.x - base.x, z: head.z - base.z } : forward;
+  const fl = Math.hypot(fwd.x, fwd.z);
+  // Yaw taking `fwd` onto +Z: rotate by -atan2(fwd.x, fwd.z) about Y.
+  const yaw = fl > 1e-6 ? -Math.atan2(fwd.x, fwd.z) : 0;
+  const c = Math.cos(yaw), s = Math.sin(yaw);
+  for (const { mesh } of parts) {
+    const p = mesh.pos, n = mesh.nrm;
+    for (let i = 0; i < p.length; i += 3) {
+      const x = (p[i] - base.x) * scale, y = (p[i + 1] - e.min[1]) * scale, z = (p[i + 2] - base.z) * scale;
+      p[i] = c * x + s * z; p[i + 1] = y; p[i + 2] = -s * x + c * z;
+      const nx = n[i], nz = n[i + 2];
+      n[i] = c * nx + s * nz; n[i + 2] = -s * nx + c * nz;
+    }
+  }
+  const after = extentsOf(parts);
+  const headAfter = sliceCentroid(parts, after.max[1] - after.size[1] * 0.12, after.max[1]);
+  return {
+    scale: +scale.toFixed(4),
+    height: +after.size[1].toFixed(2),
+    width: +after.size[0].toFixed(2),
+    depth: +after.size[2].toFixed(2),
+    /** Where the top of the model sits relative to the base, after the yaw. */
+    reach: { x: +headAfter.x.toFixed(2), z: +headAfter.z.toFixed(2) },
+  };
+}
+
+/**
+ * Author a GLB with one node, one mesh and one primitive per part, each on its
+ * own material. `parts[i].material` is `{ images: { color, normal, mr, emissive },
+ * color, metalness, roughness, emissive: [r,g,b], doubleSide, alphaMode }`;
+ * images are WebP buffers or null.
+ */
+export function packGlbMulti(parts, name = 'Model') {
+  const chunks = [];
+  const bufferViews = [];
+  let offset = 0;
+  const push = (buf, extra = {}) => {
+    const start = align4(offset);
+    if (start > offset) chunks.push(Buffer.alloc(start - offset));
+    chunks.push(buf);
+    const index = bufferViews.length;
+    bufferViews.push({ buffer: 0, byteOffset: start, byteLength: buf.length, ...extra });
+    offset = start + buf.length;
+    return index;
+  };
+  const floats = (arr) => push(Buffer.from(new Float32Array(arr).buffer), { target: 34962 });
+
+  const json = {
+    asset: { version: '2.0', generator: 'sunbelt-city' },
+    scene: 0,
+    scenes: [{ nodes: [0] }],
+    nodes: [{ name, mesh: 0 }],
+    meshes: [{ name, primitives: [] }],
+    accessors: [],
+    bufferViews,
+    buffers: [{ byteLength: 0 }],
+    samplers: [{ wrapS: 10497, wrapT: 10497 }],
+    images: [],
+    textures: [],
+    materials: [],
+  };
+  const imageIndex = new Map();
+  const addImage = (bytes) => {
+    // The same buffer may serve several parts (one atlas, three lenses).
+    if (imageIndex.has(bytes)) return imageIndex.get(bytes);
+    const view = push(bytes);
+    json.images.push({ bufferView: view, mimeType: 'image/webp' });
+    json.textures.push({ sampler: 0, source: json.images.length - 1 });
+    imageIndex.set(bytes, json.textures.length - 1);
+    return json.textures.length - 1;
+  };
+
+  for (const part of parts) {
+    const mesh = part.mesh;
+    if (mesh.idx.length === 0) continue;
+    const count = mesh.pos.length / 3;
+    const e = extents(mesh.pos);
+    const big = count > 65535;
+    const indexArray = big ? new Uint32Array(mesh.idx) : new Uint16Array(mesh.idx);
+    const a0 = json.accessors.length;
+    json.accessors.push(
+      { bufferView: floats(mesh.pos), componentType: 5126, count, type: 'VEC3', min: e.min, max: e.max },
+      { bufferView: floats(mesh.nrm), componentType: 5126, count, type: 'VEC3' },
+      { bufferView: floats(mesh.uv), componentType: 5126, count, type: 'VEC2' },
+      { bufferView: push(Buffer.from(indexArray.buffer), { target: 34963 }), componentType: big ? 5125 : 5123, count: mesh.idx.length, type: 'SCALAR' },
+    );
+    const m = part.material ?? {};
+    const images = m.images ?? {};
+    const mat = { name: part.name, pbrMetallicRoughness: {} };
+    const pbr = mat.pbrMetallicRoughness;
+    if (images.color) pbr.baseColorTexture = { index: addImage(images.color) };
+    if (m.color) pbr.baseColorFactor = [...m.color, m.alpha ?? 1];
+    if (images.normal) mat.normalTexture = { index: addImage(images.normal) };
+    if (images.mr) {
+      pbr.metallicRoughnessTexture = { index: addImage(images.mr) };
+      pbr.roughnessFactor = 1; pbr.metallicFactor = 1;
+    } else {
+      pbr.metallicFactor = m.metalness ?? 0;
+      pbr.roughnessFactor = m.roughness ?? 0.8;
+    }
+    if (images.emissive) mat.emissiveTexture = { index: addImage(images.emissive) };
+    if (m.emissive) mat.emissiveFactor = m.emissive;
+    if (m.doubleSide) mat.doubleSided = true;
+    if (m.alphaMode) mat.alphaMode = m.alphaMode;
+    json.materials.push(mat);
+    json.meshes[0].primitives.push({
+      attributes: { POSITION: a0, NORMAL: a0 + 1, TEXCOORD_0: a0 + 2 },
+      indices: a0 + 3,
+      material: json.materials.length - 1,
+    });
+  }
+
+  const bin = Buffer.concat(chunks);
+  json.buffers[0].byteLength = bin.length;
+  return { json, bin };
+}
+
+// --- edge-collapse simplification and vertex-colour baking ------------------------
+// The grid weld above is the right tool for a kit prop and the wrong one for a
+// half-million-triangle sculpt: welding a sculpt onto a centimetre grid does not
+// simplify it so much as crumple it. meshoptimizer's simplifier is a real
+// quadric edge collapse, and it treats vertices that share a position as a seam,
+// so a UV-split model keeps its texture layout while it loses its triangles.
+
+/**
+ * How badly the UV atlas is fragmented: the fraction of edges shared by two
+ * triangles in 3D whose UVs do NOT match up. A hand-unwrapped car is a few
+ * percent (its real seams); a Meshy export with a chart per triangle is
+ * effectively 100%, and no amount of careful simplification can keep a texture
+ * like that readable -- see `bakeVertexColors`.
+ */
+export function uvFragmentation(mesh) {
+  const key = (i) => `${mesh.pos[i * 3].toFixed(5)},${mesh.pos[i * 3 + 1].toFixed(5)},${mesh.pos[i * 3 + 2].toFixed(5)}`;
+  const edges = new Map();
+  let shared = 0, split = 0;
+  for (let t = 0; t < mesh.idx.length; t += 3) {
+    for (let e = 0; e < 3; e++) {
+      const a = mesh.idx[t + e], b = mesh.idx[t + ((e + 1) % 3)];
+      const ka = key(a), kb = key(b);
+      const ek = ka < kb ? `${ka}|${kb}` : `${kb}|${ka}`;
+      const prev = edges.get(ek);
+      if (prev === undefined) { edges.set(ek, [a, b]); continue; }
+      shared++;
+      // Same edge seen from the other triangle: do the UVs agree at both ends?
+      const [pa, pb] = prev;
+      const match = (i, j) => Math.abs(mesh.uv[i * 2] - mesh.uv[j * 2]) < 1e-4 && Math.abs(mesh.uv[i * 2 + 1] - mesh.uv[j * 2 + 1]) < 1e-4;
+      const ok = (key(pa) === ka) ? (match(pa, a) && match(pb, b)) : (match(pa, b) && match(pb, a));
+      if (!ok) split++;
+    }
+  }
+  return shared ? split / shared : 0;
+}
+
+/**
+ * Sample the albedo at every vertex into `mesh.col` (linear RGB, as glTF wants
+ * COLOR_0). `image` is `{ size, at(u, v) -> [r, g, b] }` in sRGB bytes.
+ */
+export function bakeVertexColors(mesh, image) {
+  const toLinear = (c) => { const s = c / 255; return s <= 0.04045 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4); };
+  const col = new Array(mesh.pos.length);
+  for (let i = 0; i < mesh.pos.length / 3; i++) {
+    const [r, g, b] = image.at(mesh.uv[i * 2], mesh.uv[i * 2 + 1]);
+    col[i * 3] = toLinear(r); col[i * 3 + 1] = toLinear(g); col[i * 3 + 2] = toLinear(b);
+  }
+  mesh.col = col;
+}
+
+/**
+ * Weld by position only, averaging normals and colours, and dropping the UVs.
+ * For a model that has just been baked to vertex colours the UV seams are the
+ * only thing keeping its vertices apart, and a closed surface simplifies far
+ * better than a bag of loose charts.
+ */
+export function weldByPosition(mesh, tol = 1e-4) {
+  const cells = new Map();
+  const remap = new Int32Array(mesh.pos.length / 3);
+  const pos = [], nrm = [], col = [], count = [];
+  const hasCol = Array.isArray(mesh.col);
+  for (let i = 0; i < remap.length; i++) {
+    const k = `${Math.round(mesh.pos[i * 3] / tol)},${Math.round(mesh.pos[i * 3 + 1] / tol)},${Math.round(mesh.pos[i * 3 + 2] / tol)}`;
+    let j = cells.get(k);
+    if (j === undefined) {
+      j = pos.length / 3;
+      cells.set(k, j);
+      pos.push(mesh.pos[i * 3], mesh.pos[i * 3 + 1], mesh.pos[i * 3 + 2]);
+      nrm.push(0, 0, 0);
+      col.push(0, 0, 0);
+      count.push(0);
+    }
+    remap[i] = j;
+    nrm[j * 3] += mesh.nrm[i * 3]; nrm[j * 3 + 1] += mesh.nrm[i * 3 + 1]; nrm[j * 3 + 2] += mesh.nrm[i * 3 + 2];
+    if (hasCol) { col[j * 3] += mesh.col[i * 3]; col[j * 3 + 1] += mesh.col[i * 3 + 1]; col[j * 3 + 2] += mesh.col[i * 3 + 2]; }
+    count[j]++;
+  }
+  for (let j = 0; j < count.length; j++) {
+    const l = Math.hypot(nrm[j * 3], nrm[j * 3 + 1], nrm[j * 3 + 2]) || 1;
+    nrm[j * 3] /= l; nrm[j * 3 + 1] /= l; nrm[j * 3 + 2] /= l;
+    col[j * 3] /= count[j]; col[j * 3 + 1] /= count[j]; col[j * 3 + 2] /= count[j];
+  }
+  const idx = [];
+  for (let t = 0; t < mesh.idx.length; t += 3) {
+    const a = remap[mesh.idx[t]], b = remap[mesh.idx[t + 1]], c = remap[mesh.idx[t + 2]];
+    if (a === b || b === c || a === c) continue;
+    idx.push(a, b, c);
+  }
+  mesh.pos = pos; mesh.nrm = nrm; mesh.idx = idx;
+  mesh.uv = new Array((pos.length / 3) * 2).fill(0);
+  if (hasCol) mesh.col = col;
+  return mesh;
+}
+
+/**
+ * Quadric edge-collapse simplification down to `maxTris`, via meshoptimizer.
+ * Surviving vertices are original vertices, so every attribute rides along
+ * untouched; unused ones are dropped afterwards.
+ */
+export async function simplify(mesh, maxTris, { lockBorder = false } = {}) {
+  const before = mesh.idx.length / 3;
+  if (before <= maxTris) return { tris: before, error: 0 };
+  const { MeshoptSimplifier } = await import('meshoptimizer');
+  await MeshoptSimplifier.ready;
+  const indices = new Uint32Array(mesh.idx);
+  const positions = new Float32Array(mesh.pos);
+  const flags = lockBorder ? ['LockBorder'] : [];
+  const [out, error] = MeshoptSimplifier.simplify(indices, positions, 3, maxTris * 3, 0.5, flags);
+
+  const remap = new Map();
+  const pos = [], nrm = [], uv = [], col = [];
+  const hasCol = Array.isArray(mesh.col);
+  const idx = new Array(out.length);
+  for (let i = 0; i < out.length; i++) {
+    const v = out[i];
+    let j = remap.get(v);
+    if (j === undefined) {
+      j = pos.length / 3;
+      remap.set(v, j);
+      pos.push(mesh.pos[v * 3], mesh.pos[v * 3 + 1], mesh.pos[v * 3 + 2]);
+      nrm.push(mesh.nrm[v * 3], mesh.nrm[v * 3 + 1], mesh.nrm[v * 3 + 2]);
+      uv.push(mesh.uv[v * 2], mesh.uv[v * 2 + 1]);
+      if (hasCol) col.push(mesh.col[v * 3], mesh.col[v * 3 + 1], mesh.col[v * 3 + 2]);
+    }
+    idx[i] = j;
+  }
+  mesh.pos = pos; mesh.nrm = nrm; mesh.uv = uv; mesh.idx = idx;
+  if (hasCol) mesh.col = col;
+  return { tris: idx.length / 3, error: +error.toFixed(4) };
 }

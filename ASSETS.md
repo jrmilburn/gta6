@@ -21,6 +21,7 @@ Convert whatever Joe has dropped into `public/assets/raw/`:
 ```
 pnpm assets:character          # raw/*.fbx        -> assets/character/*.glb
 pnpm assets:cars               # raw/<kind>/*.fbx -> assets/models/supplied/*.glb
+pnpm assets:props              # raw/{palm,street-light,traffic-light}/ -> assets/models/supplied/*.glb
 ```
 
 `fetch-assets.sh` resolves download URLs at run time (Kenney's carry a content
@@ -65,7 +66,7 @@ placed. Each kit's own `License.txt` is kept next to its models.
 | `models/cars/{sedan, sedan-sports, hatchback-sports, truck, police, van, suv}.glb` | [Kenney — Car Kit](https://kenney.nl/assets/car-kit) | CC0 | Vehicle bodies for the kinds with no supplied model: `truck`→pickup, `police`→police. The rest stay loaded as traffic variety and as the fallback if a supplied car is missing. |
 | `models/cars/{wheel-default, wheel-racing}.glb` | Kenney — Car Kit | CC0 | Wheels, kept as separate nodes so steering and rolling still work. |
 | `models/cars/{cone, box}.glb` | Kenney — Car Kit | CC0 | Street clutter. |
-| `models/nature/tree_palm*.glb` (4) | [Kenney — Nature Kit](https://kenney.nl/assets/nature-kit) | CC0 | Palms, beach and boulevard. |
+| `models/nature/tree_palm*.glb` (4) | [Kenney — Nature Kit](https://kenney.nl/assets/nature-kit) | CC0 | Palms, beach and boulevard — now the **fallback** behind the supplied palm (see [Props](#props-palm-streetlight-and-traffic-light)). |
 | `models/nature/tree_{oak, detailed, default, fat, small}.glb` | Kenney — Nature Kit | CC0 | Broadleaf trees in parks and residential blocks. |
 | `models/nature/plant_bush*.glb`, `grass*.glb`, `rock_smallA.glb` | Kenney — Nature Kit | CC0 | Shrubs, grass tufts and ground detail. |
 | `models/props/{fence, fence-low, planter, tree-small}.glb` | [Kenney — City Kit (Suburban)](https://kenney.nl/assets/city-kit-suburban) | CC0 | Residential ground-floor dressing. |
@@ -156,6 +157,9 @@ sources stay out of the repo.
 |---|---|---|---|
 | `character/*` | Mixamo (Adobe), character **Ch06** plus four animations | Adobe's Mixamo terms: royalty-free use, including commercially, by the account holder | **Not CC0, and not clearly redistributable as a standalone asset.** See the flag below. |
 | `models/supplied/{sedan,sports}.glb` | Meshy AI generations, supplied with their PBR maps | Depends on Joe's Meshy plan — free-tier generations are CC BY 4.0, paid tiers grant broader rights | Needs confirming before the repo goes public. |
+| `models/supplied/{palm,palm-far}.glb` | `raw/tropical-palm-tree/` (Sketchfab-style drop: `source/plalm_3.fbx` + four JPG maps), supplied by Joe | **Unknown** — no licence file came with it | Needs the Sketchfab page's licence recorded here before the repo goes public. |
+| `models/supplied/streetlight{,-double}.glb` | `raw/psx-style-street-light-kit/` (`StreetLight.zip`), supplied by Joe | **Unknown** — no licence file in the zip | Same. |
+| `models/supplied/traffic-light.glb` | `raw/traffic-light/` (`TrafficLight.fbx` + five 2K TGA-as-PNG maps), supplied by Joe | **Unknown** | Same. |
 
 **Flag for Joe — Mixamo redistribution.** Adobe's terms let you *use* Mixamo
 content in a project; they do not clearly permit republishing the character and
@@ -290,8 +294,8 @@ in `raw/` above everything else.
 
 | File | Source | Used for | Triangles |
 |---|---|---|---|
-| `models/supplied/sedan.glb` | Meshy "Crimson City Compact" | `sedan` — the player's default car and most of the traffic | 65,416 → 23,944, 3.8 cm weld |
-| `models/supplied/sports.glb` | Meshy "Orange Velocity" | `sports` | 551,067 → 23,994, 9.4 cm weld |
+| `models/supplied/sedan.glb` | Meshy "Crimson City Compact" | `sedan` — the player's default car and most of the traffic | 65,416 → 23,999, edge collapse |
+| `models/supplied/sports.glb` | Meshy "Orange Velocity" | `sports` | 551,067 → 23,999, edge collapse |
 
 `pickup` and `police` have no supplied model and keep their Kenney kit bodies.
 
@@ -310,7 +314,8 @@ in `raw/` above everything else.
 3. **Fits them to the collision box.** Uniform scale to the 4.4 m length the
    physics already uses. The sedan lands at 4.4 x 1.95 x 1.43 m and the sports
    car at 4.4 x 2.07 x 1.12 m, which are real cars.
-4. **Welds them down** to 24k triangles each. Traffic instances a body up to
+4. **Simplifies them** to 24k triangles each with meshoptimizer's quadric edge
+   collapse (`simplify` in `scripts/mesh.mjs`). Traffic instances a body up to
    forty times, so 551k triangles is a million triangles of moving car.
 
 **Per-car paint.** Both models are one texture with the paint baked in, so the
@@ -322,20 +327,35 @@ the parts that were never painted look after themselves — glass, tyres and
 chrome have no saturation to rotate, so a hue shift moves them not at all. The
 car's own paint colour is the modal colour of its albedo, found once at load.
 
-**DECISION — no paint mask.** The first version found the pixels close to the
-car's paint and recoloured those. It mottled: a generated albedo carries grime,
-panel gaps and baked reflections that swing any per-pixel colour test back and
-forth across its threshold, so the paint crawled over the bodywork in patches.
-The HSV remap needs no test at all.
+**DECISION — a soft paint mask.** Three versions. The first found the pixels
+close to the car's paint with a hard threshold and recoloured those; it
+mottled, because grime and baked reflections swing any threshold back and
+forth across a panel. The second had no mask at all, which was smooth — and
+turned every tyre, window and splitter maroon, because "black" on a generated
+sheet is a very dark orange and a 4x saturation ratio makes that a colour. The
+shipped version weights the remap by a wide smoothstep on hue distance from the
+paint, saturation and value: 1 on the paint, 0 on chrome, glass and rubber, and
+a band between too wide to see an edge in.
 
-**A welding bug worth recording.** The first decimation pass welded vertices on
-position alone, which merges the two sides of a UV seam — and the triangles
-between them then stretch right across the atlas, painting dark cracks over
-panels that have none in their texture. The weld now tracks two things
-separately: the *cell*, purely positional, decides which triangles collapse to
-nothing; the *vertex* is a cell plus a coarse UV, so corners at the same point
-sampling opposite ends of the atlas stay separate. Costs about 30% more vertices
-at the same triangle count. `scripts/mesh.mjs`.
+**The base paint is the modal SATURATED colour.** A generated albedo is mostly
+filler — the dark grey between its islands, the near-black of tyres and vents —
+and counted naively that grey wins. Keyed off grey, the hue rotation turned the
+sports car's dark parts the target colour and its paint something else (the
+"broken textures" Joe saw). The mode is now taken among pixels with real
+saturation first, falling back to the plain mode only for a car that really is
+white, grey or black.
+
+**The sports car was crumpled, not just mis-painted.** The first decimation was
+a grid weld — fine for a 65k-triangle export, but welding a 551k-triangle sculpt
+onto a 9 cm grid does not simplify it so much as crumple it: every panel became
+a field of facets, and the seams between them painted dark cracks across the
+paint. Both cars now go through meshoptimizer's edge collapse, which keeps the
+surface and treats shared positions as UV seams. `scripts/mesh.mjs` still has
+the grid weld (`decimate`) for the props that suit it, plus `uvFragmentation`,
+`bakeVertexColors` and `weldByPosition`: a future drop whose atlas is a chart
+per triangle (over 30% of shared edges UV-split) is baked to vertex colour
+instead, since no simplification can keep a texture like that readable. Neither
+of the current two trips it (both are 6%).
 
 **DECISION — the wheels do not turn.** Both exports are a single welded mesh
 with no wheel nodes. The brief's instruction for that case (hide them, use the
@@ -344,6 +364,66 @@ triangles as the arch above them, so the car is drawn whole and its wheels
 neither spin nor steer. Visible at a standstill if you look for it; invisible at
 speed, and much less visible than four grey cylinders half-buried in the
 bodywork. Fixed by an export with wheel nodes, not by code.
+
+### Props: palm, streetlight and traffic light
+
+Three more drops from Joe, converted by `scripts/convert-props.mjs`. Each
+outranks what it replaces and falls back to it when absent: the palm to the
+Nature Kit pair, the lamp and the signal to the procedural poles in
+`src/world/props.ts`.
+
+| File | Source | Used for | Triangles | Size |
+|---|---|---|---|---|
+| `models/supplied/palm.glb` | `raw/tropical-palm-tree/plalm_3.fbx` | Every palm — beach, boulevard, and the scatter on every block | 3,461 | 233 KB |
+| `models/supplied/palm-far.glb` | same, welded | The same palms beyond 60 m | 919 | 113 KB |
+| `models/supplied/streetlight.glb` | `raw/psx-style-street-light-kit/StreetLight.zip`, node `StreetLightSingle` | Every streetlight | 82 | 12 KB |
+| `models/supplied/streetlight-double.glb` | same, node `StreetLightDouble` | Reserved for the pier's centreline | 98 | 13 KB |
+| `models/supplied/traffic-light.glb` | `raw/traffic-light/TrafficLight.fbx` | Every signal, four to a block | 2,574 | 309 KB |
+
+**Fitted on height, stood on their own base.** `orientAndFit` sorts the three
+extents and calls the longest "length", which is right for a car and wrong for
+everything here — a palm is tallest, not longest. `fitUpright` trusts Y as up
+(all three arrive Y-up; a Z-up drop would show on its side in the printed
+extents), scales to a target height, and puts the origin under the *bottom
+slice of the mesh* rather than the bounding-box centre, so a leaning palm and a
+cantilevered lamp both stand on their own foot.
+
+**Orientation contract: local +Z is the business end.** A lamp's arm reaches
+along +Z; a signal's lenses face +Z. The converter measures both (the arm as
+the base-to-head offset, the lens normal as the mean normal of the lens
+triangles), yaws the model so they land on +Z, and prints what it found:
+
+```
+StreetLightSingle: 7 m tall, head reaches (0, 2.1) from the base -- arm along +Z, correct
+traffic-light: lenses face (1.00, -0.00) in the file, turned to +Z
+```
+
+`cityGen.ts` then only has to know which way the road is. Streetlights ring
+each block with the arm pointing off the kerb; signals stand one per corner as
+a near-side post on the driver's right, facing back along the approach they
+control (right-hand traffic puts a car heading +X on the +Z side of its road,
+so the corner at (maxX, minZ) is its signal, facing −X). `smoke/props.spec.ts`
+checks every one of the 576 signals and a sample of the lamps against the road
+grid, and screenshots to `screens/props/`.
+
+**The traffic light is four materials, not one.** Its lens triangles are found
+by what they sample from the albedo — the lenses are the only saturated texels
+on it, and by hue, because they are painted unlit (a red of 99/39/31) — and
+split onto `lens-red`, `lens-amber` and `lens-green`, each carrying the albedo
+as its emissive map. One instance attribute then says which lens is lit and
+each lens material multiplies its emissive by "is that me": three draw calls
+for every signal in the city, and `world/signals.ts` drives the phases.
+
+**The kit's own light cone is not used.** It is authored for one finish of one
+arm and stops four metres off the ground. At dusk `props.ts` draws a cone of
+its own from the measured reach — alpha-blended, not additive: forty additive
+cones seen down a boulevard stack into one bright pyramid that fills the sky.
+
+**Maps.** Palm: the two JPG diffuses and the leaf normal at 1K, the roughness
+packed into a metal-rough map; the far LOD carries 512 px copies. Streetlight:
+the three kit JPEGs (concrete, metal, lit lens) at 256 px — the sources are
+32 × 64. Traffic light: albedo, normal and packed R+M at 512 px from the 2K
+sources; the head is 0.4 m across.
 
 ### Pedestrians: one character, six of them
 

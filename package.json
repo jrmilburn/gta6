@@ -10,6 +10,7 @@
     "smoke": "playwright test",
     "assets:character": "node scripts/convert-character.mjs",
     "assets:cars": "node scripts/convert-cars.mjs",
+    "assets:props": "node scripts/convert-props.mjs",
     "assets:fetch": "bash scripts/fetch-assets.sh"
   },
   "dependencies": {
@@ -19,6 +20,7 @@
     "@playwright/test": "^1.48.0",
     "@types/three": "^0.169.0",
     "fbx2gltf": "0.9.7-p1",
+    "meshoptimizer": "0.22.0",
     "typescript": "^5.6.3",
     "vite": "^5.4.10"
   }

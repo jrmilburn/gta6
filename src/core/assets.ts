@@ -33,6 +33,14 @@ export type CarModel = (typeof CAR_MODELS)[number];
 export const SUPPLIED_CARS = ['sedan', 'sports', 'pickup', 'police'] as const;
 export type SuppliedCar = (typeof SUPPLIED_CARS)[number];
 
+/**
+ * Props Joe supplied in raw/ and scripts/convert-props.mjs converted. The palm
+ * outranks the Nature Kit palms, the lamp and the signal outrank the procedural
+ * poles; each falls back to what it replaced when absent.
+ */
+export const SUPPLIED_PROPS = ['palm', 'palm-far', 'streetlight', 'streetlight-double', 'traffic-light'] as const;
+export type SuppliedProp = (typeof SUPPLIED_PROPS)[number];
+
 export const NATURE_MODELS = [
   'tree_palmDetailedTall', 'tree_palmDetailedShort', 'tree_palmBend', 'tree_palmTall',
   'tree_oak', 'tree_detailed', 'tree_default', 'tree_fat', 'tree_small',
@@ -70,6 +78,8 @@ export interface Assets {
   car(name: CarModel): THREE.Object3D | null;
   /** A car supplied in raw/, which outranks the kit body for its kind. */
   supplied(name: SuppliedCar): THREE.Object3D | null;
+  /** A prop supplied in raw/ (palm, streetlight, traffic light). */
+  suppliedProp(name: SuppliedProp): THREE.Object3D | null;
   /** The skinned hero and its clips, or null when running procedural. */
   character: CharacterSource | null;
   nature(name: NatureModel): THREE.Object3D | null;
@@ -83,7 +93,7 @@ export type ProgressFn = (fraction: number, label: string) => void;
 
 /** Number of individual files `loadAssets` will fetch, for the progress bar. */
 function fileCount(): number {
-  return 1 + MATERIALS.length * 3 + CAR_MODELS.length + SUPPLIED_CARS.length
+  return 1 + MATERIALS.length * 3 + CAR_MODELS.length + SUPPLIED_CARS.length + SUPPLIED_PROPS.length
     + NATURE_MODELS.length + PROP_MODELS.length + STREET_MODELS.length + CHARACTER_FILES;
 }
 
@@ -160,6 +170,7 @@ export async function loadAssets(
   // --- models ---------------------------------------------------------------
   const cars = new Map<string, THREE.Object3D>();
   const supplied = new Map<string, THREE.Object3D>();
+  const suppliedProps = new Map<string, THREE.Object3D>();
   const nature = new Map<string, THREE.Object3D>();
   const props = new Map<string, THREE.Object3D>();
   const street = new Map<string, THREE.Object3D>();
@@ -184,6 +195,7 @@ export async function loadAssets(
 
   await group(CAR_MODELS, 'cars', cars);
   await group(SUPPLIED_CARS, 'supplied', supplied);
+  await group(SUPPLIED_PROPS, 'supplied', suppliedProps);
   await group(NATURE_MODELS, 'nature', nature);
   await group(PROP_MODELS, 'props', props);
   await group(STREET_MODELS, 'street', street);
@@ -202,6 +214,7 @@ export async function loadAssets(
     material: (n) => materials.get(n) ?? null,
     car: (n) => cars.get(n) ?? null,
     supplied: (n) => supplied.get(n) ?? null,
+    suppliedProp: (n) => suppliedProps.get(n) ?? null,
     nature: (n) => nature.get(n) ?? null,
     prop: (n) => props.get(n) ?? null,
     street: (n) => street.get(n) ?? null,
@@ -212,7 +225,7 @@ export async function loadAssets(
 export function emptyAssets(): Assets {
   return {
     ok: false, env: null, character: null, failed: [],
-    material: () => null, car: () => null, supplied: () => null,
+    material: () => null, car: () => null, supplied: () => null, suppliedProp: () => null,
     nature: () => null, prop: () => null, street: () => null,
   };
 }

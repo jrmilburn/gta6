@@ -9,7 +9,7 @@
 // them every frame.
 import * as THREE from 'three';
 import { Rng } from '../core/rng';
-import type { Assets, NatureModel } from '../core/assets';
+import type { Assets, NatureModel, SuppliedProp } from '../core/assets';
 import type { PropSpot, CityLayout } from './cityGen';
 import { flattenModel, cloneMaterials, makeInstanced, type FlatModel } from './modelInstancing';
 import { createWind, type WindHandle } from './wind';
@@ -41,6 +41,12 @@ const TINTS: Record<string, number> = {
 interface Species {
   near: NatureModel;
   far: NatureModel;
+  /**
+   * A supplied model that outranks the kit pair when it loaded. Joe's palm is
+   * a textured 3.5k-triangle tree with a welded 900-triangle twin for the far
+   * set; the Kenney pair stays as the fallback, and props.ts's fronds behind it.
+   */
+  supplied?: { near: SuppliedProp; far: SuppliedProp };
   /** Optional per-species override of TINTS, keyed the same way. */
   tint?: Record<string, number>;
   /** Metres tall the instances should end up, before per-instance variation. */
@@ -55,9 +61,10 @@ interface Species {
 // what separates a beach from a park at a glance.
 const PALM_TINT = { woodBark: 0xa9855e, leafsGreen: 0x5f9e46 };
 
+const SUPPLIED_PALM = { near: 'palm', far: 'palm-far' } as const;
 const PALMS: Species[] = [
-  { near: 'tree_palmDetailedTall', far: 'tree_palmTall', height: 7.4, wind: 0.030, shadow: true, tint: PALM_TINT },
-  { near: 'tree_palmDetailedShort', far: 'tree_palmBend', height: 5.6, wind: 0.034, shadow: true, tint: PALM_TINT },
+  { near: 'tree_palmDetailedTall', far: 'tree_palmTall', height: 7.4, wind: 0.030, shadow: true, tint: PALM_TINT, supplied: SUPPLIED_PALM },
+  { near: 'tree_palmDetailedShort', far: 'tree_palmBend', height: 5.6, wind: 0.034, shadow: true, tint: PALM_TINT, supplied: SUPPLIED_PALM },
 ];
 const TREES: Species[] = [
   { near: 'tree_detailed', far: 'tree_default', height: 5.8, wind: 0.016, shadow: true },
@@ -95,8 +102,11 @@ const S = new THREE.Vector3();
 function buildPair(
   assets: Assets, spec: Species, capacity: number, wind: WindHandle, shadows: boolean,
 ): { pair: Pair; models: [FlatModel, FlatModel] } | null {
-  const nearSrc = assets.nature(spec.near);
-  const farSrc = assets.nature(spec.far) ?? nearSrc;
+  const suppliedNear = spec.supplied ? assets.suppliedProp(spec.supplied.near) : null;
+  const nearSrc = suppliedNear ?? assets.nature(spec.near);
+  const farSrc = suppliedNear
+    ? (assets.suppliedProp(spec.supplied!.far) ?? suppliedNear)
+    : (assets.nature(spec.far) ?? nearSrc);
   if (!nearSrc || !farSrc) return null;
   const nearModel = flattenModel(nearSrc);
   const farModel = flattenModel(farSrc);

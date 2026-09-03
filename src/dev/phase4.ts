@@ -26,7 +26,7 @@ export function setup(game: Game): void {
   const city = generateCity(new Rng(SEED));
   game.scene.add(buildGround(city));
   game.scene.add(buildBuildings(city));
-  game.scene.add(buildProps(city));
+  game.scene.add(buildProps(city).group);
 
   const spawn = city.spawns.player;
   const player = new Player(game, { pos: spawn, colliders: city.colliders });
