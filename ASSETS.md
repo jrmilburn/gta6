@@ -27,9 +27,9 @@ pnpm assets:cars               # raw/<kind>/*.fbx -> assets/models/supplied/*.gl
 hash that changes on every re-release; Poly Haven goes through its public API),
 so it keeps working across upstream updates instead of rotting into 404s.
 
-**Total shipped: 13 MB** — 3.2 MB character, 2.9 MB HDRIs, 2.9 MB textures,
-2.1 MB supplied cars, 1.7 MB Kenney models, 0.4 MB Poly Haven street props.
-Budget was 60 MB. `public/assets/raw/` is 340 MB of source files;
+**Total shipped: 15 MB** — 4.4 MB character (21 clips), 4.3 MB models (2.1 MB
+supplied cars, 1.7 MB Kenney kits, 0.4 MB Poly Haven street props), 2.9 MB
+HDRIs, 2.9 MB textures. Budget was 60 MB. `public/assets/raw/` is 340 MB of source files;
 it is gitignored, excluded from the Vite build (see `vite.config.ts`) and never
 shipped.
 
@@ -178,6 +178,8 @@ node hierarchy and animation — a Mixamo animation export carries a full copy o
 the character and its 45 MB of 4K textures, so the five clips together go from
 270 MB to 550 KB. The hero's own textures are re-encoded to WebP.
 
+Twenty-one clips and one hero, 4.4 MB in total.
+
 | File | Size | Contents |
 |---|---|---|
 | `character/hero.glb` | 2.8 MB | Skinned mesh, 53,167 triangles, 65 bones, 1.825 m tall with the feet at y = 0. Two materials (body atlas, clothing atlas); 2K albedo, 1K normal. |
@@ -185,25 +187,82 @@ the character and its 45 MB of 4K textures, so the five clips together go from
 | `character/anim-jog.glb` | 45 KB | |
 | `character/anim-run.glb` | 40 KB | |
 | `character/anim-dance.glb` | 335 KB | |
-| `character/anim-shoot.glb` | 56 KB | loaded, currently unused |
-| `character/manifest.json` | 2 KB | what the runtime reads instead of guessing |
+| `character/anim-jump.glb`, `anim-punch*.glb` (5), `anim-fall*.glb` (2), `anim-pistolFire.glb`, `anim-jogGoofy.glb`, `anim-jogBack.glb`, `anim-slowRun.glb` | 40-90 KB each | the second drop; see the inventory below |
+| `character/manifest.json` | 3 KB | what the runtime reads instead of guessing |
 
-**Clip inventory** (measured at build time, written to `manifest.json`):
+**Clip inventory** (measured at build time, written to `manifest.json`). `role`
+is what the runtime does with the clip: `ladder` clips are rungs of the
+speed-driven blend, `goofy` and `back` stand in for a rung on demand, `many` is
+a set the game picks from at random, and `once` is triggered explicitly.
 
-| Source file | Clip | Duration | Channels | Hips XZ translation | Authored ground speed |
-|---|---|---|---|---|---|
-| `Strut Walking.fbx` | `walk` | 1.43 s | 53 | yes — 1.27 m along Z | **0.89 m/s** |
-| `Slow Run.fbx` | `jog` | 0.73 s | 53 | yes — 2.10 m along Z | **2.86 m/s** |
-| `Fast Run.fbx` | `run` | 0.53 s | 53 | yes — 2.76 m along Z | **5.17 m/s** |
-| `Gangnam Style.fbx` | `dance` | 12.37 s | 53 | in place (wanders 1.36 m sideways, returns to the mark) | — |
-| `Shooting.fbx` | `shoot` | 1.17 s | 53 | in place | — |
-| `main-character.fbx` | — | — | — | — | the skinned hero; its own take has zero channels |
+| source | clip | role | duration | root motion | authored speed | direction |
+|---|---|---|---|---|---|---|
+| `running/Strut Walking.fbx` | `walk` | ladder | 1.43 s | 1.27 m | **0.89 m/s** | forward |
+| `running/Jogging.fbx` | `jog` | ladder | 2.57 s | 4.63 m | **1.81 m/s** | forward |
+| `running/Slow Run.fbx` | `slowRun` | ladder | 0.73 s | 2.10 m | **2.86 m/s** | forward |
+| `Fast Run.fbx` | `run` | ladder | 0.53 s | 2.76 m | **5.17 m/s** | forward |
+| `running/Goofy Running.fbx` | `jogGoofy` | goofy | 0.63 s | 1.03 m | 1.63 m/s | forward |
+| `running/Jog Forward Diagonal.fbx` | `jogFwdDiag` | dir | 0.83 s | 2.08 m | 2.49 m/s | **+45°** |
+| `running/Jog Backward Diagonal.fbx` | `jogBackDiag` | dir | 0.73 s | 1.54 m | 2.09 m/s | **-134°** |
+| `running/Jog Backward.fbx` | `jogBack` | dir | 0.80 s | 1.74 m | 2.17 m/s | **180°** |
+| `gun/movement/while aimed/Pistol Strafe.fbx` | `pistolStrafe` | dir (armed) | 0.57 s | 1.17 m | 2.06 m/s | **+90°** |
+| `gun/movement/while aimed/Pistol Walk Backward.fbx` | `pistolBack` | dir (armed) | 1.03 s | 1.39 m | 1.34 m/s | **180°** |
+| `gun/Pistol Idle.fbx` | `pistolIdle` | once | 1.00 s | in place | — | — |
+| `Jump.fbx` | `jump` | once | 0.93 s | 2.29 m | 2.46 m/s | — |
+| `punches/Elbow Punching.fbx` | `punch` | many | 1.67 s | in place | — | — |
+| `punches/Punch Combo.fbx` | `punch-2` | many | 2.20 s | in place | — | — |
+| `punches/Punching (1).fbx` | `punch-3` | many | 1.00 s | in place | — | — |
+| `punches/Punching.fbx` | `punch-4` | many | 1.27 s | in place | — | — |
+| `punches/Right Hook.fbx` | `punch-5` | many | 1.10 s | in place | — | — |
+| `fall-over/Fall Over.fbx` | `fall` | many | 2.00 s | 0.74 m | — | 39.5° of hips yaw |
+| `fall-over/Falling Down.fbx` | `fall-2` | many | 2.27 s | 0.98 m | — | — |
+| `Shooting.fbx` | `pistolFire` | once | 1.17 s | in place | — | — |
+| `Gangnam Style.fbx` | `dance` | once | 12.37 s | in place | — | — |
+| `main-character.fbx` | — | hero | — | — | — | the skinned mesh; its own take has no channels |
 
-None of the three locomotion clips was exported in place, so
-`src/core/character.ts` strips the X and Z of the `mixamorigHips.position`
-track and keeps Y, leaving the controller to own where the character is while
-the body still drops and lifts. Clips with **no net travel** are left alone —
-the dance's sideways step is the dance, not root motion trying to move anyone.
+**A directional clip's angle is measured, not read off its file name.** The name
+says a clip is a strafe; only its root motion says which way it strafes, and
+getting that backwards puts the character sidestepping into whatever it was
+trying to circle. The converter takes `atan2` of the hips' net travel: that is
+how `Jog Backward Diagonal` turned out to be a **left** diagonal at -134°, where
+the file name would have suggested either side with equal confidence.
+
+**Each one-sided clip is mirrored at load** (`src/entities/clipMirror.ts`), so
+one download covers both diagonals. Mirroring swaps the Left and Right bone
+names, negates X on translation tracks and negates Y and Z on rotation tracks --
+all three together, because doing any two of them is worse than doing none.
+
+**Root motion is stripped from what the controller drives, and kept on what
+drives itself.** The four ladder rungs, the two alternates and the jump all have
+their hips' X and Z pinned, so the controller owns where the character is while
+the body still drops and lifts. The two falls keep theirs: a knockdown is
+three quarters of a metre of body pitching onto the ground, the pedestrian's AI
+is stopped for the whole of it, and stripping the travel would fold them
+straight down on the spot.
+
+**Hips yaw is stripped from `idle`, `punch*` and `pistol*`.** The brief flags
+baked yaw as a likely cause of the spinning bug, so it was measured rather than
+assumed: it is zero on every clip in the set except `Fall Over`, whose 39.5° is
+the body twisting as it goes down and is left alone. The strip is still applied,
+because it costs nothing and the next download may not be so clean.
+
+**The pistol stance is `Pistol Idle.fbx`,** held as an additive upper-body
+overlay at full weight while aiming and at 0.6 while the gun is merely drawn,
+which drops the arms into a ready stance. `Shooting.fbx` takes the overlay for
+the duration of each shot and hands it straight back.
+
+The one procedural piece left is the elevation: every supplied pistol clip holds
+the gun level, and level is wrong the moment the player looks up or down, so the
+right arm and forearm are pitched to follow the camera. Everything else -- the
+grip, the two-handed hold, the recoil -- comes from the clips.
+
+**DECISION on the additive reference.** An overlay is a delta from some pose,
+and which pose decides whether it works at all. A punch is measured against its
+own first frame, so the delta is the swing. A *stance* measured against its own
+first frame is nothing at all -- that frame already has the arms up, so the
+subtraction cancels exactly the thing worth adding. The pistol clips are
+measured against the idle instead, and the delta becomes "raise the gun from
+where the arms would otherwise be".
 
 **No idle clip was supplied.** One is synthesised from frame 0 of the walk as a
 static two-key pose, and `characterRig.ts` layers a breath (chest scale to 1.015

@@ -5,7 +5,7 @@ a grid city, traffic, pedestrians and a car you can steal.
 
 The world is still generated procedurally at boot — the layout, the buildings,
 the roads and every sound. What it is *dressed* in comes from a small bundle in
-`public/assets/` (11.6 MB): a skinned character with four animations, two cars,
+`public/assets/` (15 MB): a skinned character with twenty-one animations, two cars,
 two Poly Haven HDRIs for the lighting, Kenney kits for the vegetation, Poly
 Haven street furniture, and ambientCG PBR textures for the walls and the ground.
 Every one of those has a working procedural fallback, so the game runs, and
@@ -24,13 +24,23 @@ gitignored and excluded from the build; only the converted output ships.
 ```
 public/assets/raw/
   main-character.fbx        # a Mixamo export "with skin"
-  Strut Walking.fbx         # animations; the file name becomes the clip name
-  Slow Run.fbx              #   walk / jog / run / dance / shoot are recognised
-  Fast Run.fbx
+  Jump.fbx                  # the file name, or its folder, decides the role
   Gangnam Style.fbx
+  Shooting.fbx
+  running/                  # walk, jog, run, goofy, and the diagonals
+  punches/                  # any number; one is picked at random per swing
+  fall-over/                # knockdowns, likewise
+  gun/                      # the pistol stance
+  gun/movement/while aimed/  #   and how to move while holding it
   sedan/                    # one directory per vehicle kind, with its textures
   sportscar/
 ```
+
+The converter recognises `walk`, `jog`, `run`, `goofy`, `diagonal`, `backward`,
+`strafe`, `jump`, `punch`, `fall`, `pistol`, `shoot`, `idle` and `dance` in
+either the file name or the path. Anything it does not recognise is still
+converted and loaded, just unused. A clip that travels has its direction
+**measured** from its own root motion rather than guessed from its name.
 
 ## Commands
 
@@ -67,16 +77,31 @@ body to within 0.1%.
 
 | Key | Action |
 |---|---|
-| W A S D / Arrows | Drive / walk |
+| Mouse | Look. Click the canvas to take the pointer lock; Esc releases it |
+| E | Enter / exit a vehicle — a prompt appears when one is in reach |
+| W A S D / Arrows | Drive / walk, relative to where you are looking |
 | Space | Handbrake (in car) / jump (on foot) |
 | Shift | Sprint |
-| E | Enter / exit vehicle |
-| C | Cycle camera (chase, hood, orbit, drone, free-fly) |
-| H | Toggle HUD |
-| R | Respawn |
+| Left click | Punch (unarmed) / fire (pistol drawn, held to keep firing) |
+| Right click | Aim down the pistol — over the shoulder, narrower lens |
+| H | Draw / holster the pistol |
+| P | Goofy run — swaps the jog clip for a sillier one |
 | G | Dance for 8 seconds — orbit camera, a beat, and nearby pedestrians join in |
+| C | Cycle camera (chase, hood, orbit, drone, free-fly) |
+| R | Respawn |
 | K | Play the showcase sequence |
-| Esc | Pause |
+| ` | Toggle HUD |
+| Esc | Pause (and release the pointer lock) |
+
+Punching or shooting a civilian knocks them down. They lie still for a minute,
+then get back up. There is no blood, no gore and nothing dies.
+
+**Not finished yet.** Heat accumulates from knockdowns and gunfire and lights
+the wanted stars, but nothing responds to it: `src/entities/police.ts` is still
+a stub, so there are no police units to dispatch and the "drive to the sound of
+the shot" hook in `src/gameplay/wanted.ts` is wired and inert. A downed
+pedestrian is also not solid to traffic -- a car passes through rather than
+bumping them.
 
 ## URL parameters
 
@@ -91,3 +116,5 @@ body to within 0.1%.
 | `?time=dusk` | Dusk lighting variant (swaps the HDRI, the sun and the palette) |
 | `?post=0` | Disable ambient occlusion and bloom — the framerate fallback |
 | `?assets=0` | Skip the asset load and run fully procedural, to exercise the fallbacks |
+| `?peds=12&traffic=4` | Scale the crowd and the traffic. For measuring against a stated population, and for tests that need the simulation to outrun a software rasteriser |
+| `?shadows=0` | Drop the shadow pass. A throughput switch for tests, never a gameplay one |
