@@ -30,7 +30,12 @@ const PLAYER_PALETTE: Palette = {
   shoes: 0xf2f0eb,
 };
 
+/** A held whole-body pose the controller asks for, on top of locomotion. */
+export type BodyPose = 'swim' | 'sit' | 'lean' | 'ride';
+
 export interface PlayerMeshFrame {
+  /** Optional held pose: swimming, sitting on a bench, leaning on a rail, riding. */
+  pose?: BodyPose | null;
   dt: number;
   time: number;
   /** Actual ground speed, m/s. Drives both the blend weights and the cycle rate. */

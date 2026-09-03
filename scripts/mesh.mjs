@@ -617,10 +617,10 @@ export function bakeVertexColors(mesh, image) {
  * only thing keeping its vertices apart, and a closed surface simplifies far
  * better than a bag of loose charts.
  */
-export function weldByPosition(mesh, tol = 1e-4) {
+export function weldByPosition(mesh, tol = 1e-4, keepUv = false) {
   const cells = new Map();
   const remap = new Int32Array(mesh.pos.length / 3);
-  const pos = [], nrm = [], col = [], count = [];
+  const pos = [], nrm = [], col = [], count = [], uv = [];
   const hasCol = Array.isArray(mesh.col);
   for (let i = 0; i < remap.length; i++) {
     const k = `${Math.round(mesh.pos[i * 3] / tol)},${Math.round(mesh.pos[i * 3 + 1] / tol)},${Math.round(mesh.pos[i * 3 + 2] / tol)}`;
@@ -632,6 +632,9 @@ export function weldByPosition(mesh, tol = 1e-4) {
       nrm.push(0, 0, 0);
       col.push(0, 0, 0);
       count.push(0);
+      // The first vertex's UV stands for the cell: right on a continuous
+      // chart, and a small smear across a seam that a housing can afford.
+      uv.push(mesh.uv[i * 2], mesh.uv[i * 2 + 1]);
     }
     remap[i] = j;
     nrm[j * 3] += mesh.nrm[i * 3]; nrm[j * 3 + 1] += mesh.nrm[i * 3 + 1]; nrm[j * 3 + 2] += mesh.nrm[i * 3 + 2];
@@ -650,7 +653,7 @@ export function weldByPosition(mesh, tol = 1e-4) {
     idx.push(a, b, c);
   }
   mesh.pos = pos; mesh.nrm = nrm; mesh.idx = idx;
-  mesh.uv = new Array((pos.length / 3) * 2).fill(0);
+  mesh.uv = keepUv ? uv : new Array((pos.length / 3) * 2).fill(0);
   if (hasCol) mesh.col = col;
   return mesh;
 }

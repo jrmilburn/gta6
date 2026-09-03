@@ -7,13 +7,21 @@
 // height from the same grid the geometry was built on -- no raycast, no extra
 // data, and O(1) per query because the block grid is regular.
 import { CFG } from '../config';
-import { BOARDWALK, PITCH, nodeX, nodeZ, type CityLayout } from './cityGen';
+import { BOARDWALK, PIER, PITCH, SAND_EDGE, SEA_LEVEL, nodeX, nodeZ, type CityLayout } from './cityGen';
 
 const C = CFG.city;
 /** Matches ground.ts: block slabs sit this far above the asphalt. */
 export const KERB = 0.15;
-/** Matches ground.ts: the boardwalk deck. */
+/** Matches ground.ts: the boardwalk deck, and the pier's. */
 export const DECK = 0.32;
+/** Where the feet sit while swimming: a little under the surface. */
+export const SWIM_HEIGHT = SEA_LEVEL - 0.55;
+
+/** Is this point in the sea -- past the sand and not on the pier? */
+export function waterAt(x: number, z: number): boolean {
+  if (z >= SAND_EDGE) return false;
+  return !(x >= PIER.minX && x <= PIER.maxX && z >= PIER.minZ && z <= PIER.maxZ);
+}
 
 const ORIGIN_X = nodeX(0);
 const ORIGIN_Z = nodeZ(0);
@@ -35,6 +43,8 @@ export function makeGroundSampler(layout: CityLayout): GroundSampler {
     if (x >= BOARDWALK.minX && x <= BOARDWALK.maxX && z >= BOARDWALK.minZ && z <= BOARDWALK.maxZ) {
       return DECK;
     }
+    if (x >= PIER.minX && x <= PIER.maxX && z >= PIER.minZ && z <= PIER.maxZ) return DECK;
+    if (z < SAND_EDGE) return SWIM_HEIGHT;
     const ix = Math.floor((x - ORIGIN_X) / PITCH);
     const iz = Math.floor((z - ORIGIN_Z) / PITCH);
     if (ix < 0 || iz < 0 || ix >= C.blocksX || iz >= C.blocksZ) return 0;

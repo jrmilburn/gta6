@@ -22,7 +22,7 @@ export type MaterialName = (typeof MATERIALS)[number];
 /** Car bodies, keyed by the game's vehicle kinds plus traffic-only extras. */
 export const CAR_MODELS = [
   'sedan', 'sedan-sports', 'hatchback-sports', 'truck', 'police', 'van', 'suv',
-  'wheel-default',
+  'wheel-default', 'cone',
 ] as const;
 export type CarModel = (typeof CAR_MODELS)[number];
 

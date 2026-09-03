@@ -99,10 +99,11 @@ export function createUi(game: Game, session: Session, existingScreens?: Screens
   });
   game.events.on('busted', () => screens.showBusted());
   game.events.on('wrecked', (payload) => {
-    // `wrecked` fires per-vehicle (traffic wrecks too, once phase 4 exists);
-    // only the player's own car earns the full-screen state.
-    const v = payload && typeof payload === 'object' ? (payload as { vehicle?: unknown }).vehicle : undefined;
-    if (v === session.playerVehicle) screens.showWrecked();
+    // `wrecked` fires per-vehicle (traffic wrecks too); only the player's own
+    // car earns the full-screen state -- and so does the player themselves,
+    // run down or shot on foot, which used to be a silent teleport.
+    const o = payload && typeof payload === 'object' ? (payload as { vehicle?: unknown; player?: unknown }) : {};
+    if (o.player !== undefined || (o.vehicle !== undefined && o.vehicle === session.playerVehicle)) screens.showWrecked();
   });
 
   return {

@@ -13,7 +13,7 @@ import { CFG } from '../config';
 import { SpatialHash } from '../core/spatial';
 import { InputSmoother, shortestAngle, smoothDamp, smoothDampAngle } from '../core/smooth';
 // `shortestAngle` is still used by renderSync's heading interpolation.
-import { PlayerMesh, type PlayerVisual } from './playerMesh';
+import { PlayerMesh, type BodyPose, type PlayerVisual } from './playerMesh';
 import { Legs } from './playerJump';
 import type { CameraSubject } from '../camera/cameras';
 import { circleVsAabb, type VehicleLike } from './playerCollision';
@@ -32,6 +32,11 @@ const HIT_COOLDOWN = 1;
 
 const F = CFG.feel.foot;
 const TURN_RATE = (F.turnRateDeg * Math.PI) / 180;
+/** Swimming: a slow, steady paddle. No sprint, no jump. */
+const SWIM_SPEED = 2.0;
+/** A dive off a rail: forward and up, then the arc down to the water. */
+const DIVE_FORWARD = 4.5;
+const DIVE_UP = 3.5;
 
 function clamp(v: number, lo: number, hi: number): number {
   return v < lo ? lo : v > hi ? hi : v;
@@ -56,7 +61,12 @@ export interface PlayerOptions {
   visual?: PlayerVisual | null;
   /** Where the player is looking. Movement is measured against its yaw. */
   look?: { yaw: number } | null;
+  /** Is this point in the sea? Swimming starts there. Never, if absent. */
+  waterAt?: (x: number, z: number) => boolean;
 }
+
+/** Something carrying the player: a gondola seat, updated every step. */
+export type Carrier = () => { x: number; y: number; z: number; heading: number };
 
 export class Player implements System, Renderable, CameraSubject {
   readonly pos: Vec2;
@@ -82,6 +92,17 @@ export class Player implements System, Renderable, CameraSubject {
    * and aiming both hold the character to a walk (sections 6 and 7).
    */
   speedCap = Infinity;
+  /** True while in the sea: slow, no jumping, the swimming pose. */
+  swimming = false;
+  /**
+   * A held whole-body pose (sitting, leaning). Movement input is ignored while
+   * one is set; whoever set it clears it on the first movement key.
+   */
+  pose: BodyPose | null = null;
+  /** While set, the player is somewhere else's passenger and goes where it goes. */
+  carry: Carrier | null = null;
+  /** True from a dive until the landing: the rail being dived over is not a wall. */
+  private vaulting = false;
 
   readonly mesh: PlayerVisual;
   readonly legs = new Legs();
@@ -100,6 +121,7 @@ export class Player implements System, Renderable, CameraSubject {
   private respawnPoint: Vec2;
   private invulnUntil = 0;
   private groundHeightAt: (x: number, z: number) => number;
+  private readonly waterAt: (x: number, z: number) => boolean;
   /** The look direction the movement keys are measured against (section 3). */
   private readonly look: { yaw: number } | null;
   /** Previous physics state, for render interpolation (1.1). */
@@ -110,6 +132,7 @@ export class Player implements System, Renderable, CameraSubject {
     this.pos = { x: opts.pos?.x ?? 0, z: opts.pos?.z ?? 0 };
     this.respawnPoint = { ...this.pos };
     this.groundHeightAt = opts.groundHeightAt ?? (() => 0);
+    this.waterAt = opts.waterAt ?? (() => false);
     this.look = opts.look ?? null;
     this.groundY = this.groundHeightAt(this.pos.x, this.pos.z);
     this.y = this.groundY;
@@ -145,18 +168,31 @@ export class Player implements System, Renderable, CameraSubject {
     if (!this.onFoot) return;
     this.snapshot();
 
+    if (this.carry) {
+      // A passenger: the carrier owns the position outright.
+      const c = this.carry();
+      this.pos.x = c.x; this.pos.z = c.z; this.y = c.y; this.heading = c.heading;
+      this.velX = 0; this.velZ = 0; this.speed = 0; this.speedFrac = 0;
+      this.groundY = c.y;
+      this.legs.reset();
+      return;
+    }
+
+    this.swimming = this.waterAt(this.pos.x, this.pos.z) && this.legs.grounded;
+    if (this.swimming) this.speedCap = Math.min(this.speedCap, SWIM_SPEED);
+
     this.applyMovement(dt);
     // The visual gets first say on the wind-up, so a supplied jump clip and the
     // physics impulse leave the ground on the same frame (section 4).
     const jumping = this.host.input.justPressed('handbrake') && this.legs.grounded
-      && !this.legs.airborne;
+      && !this.legs.airborne && !this.swimming && this.pose === null;
     if (jumping) {
       const windUp = this.mesh.jump ? this.mesh.jump() : null;
       if (windUp !== null && windUp !== undefined) this.legs.anticipation = windUp;
     }
     this.legs.step(dt, jumping);
-    if (this.legs.justLanded) this.mesh.land?.();
-    this.resolveWorldCollisions();
+    if (this.legs.justLanded) { this.mesh.land?.(); this.vaulting = false; }
+    if (!this.vaulting) this.resolveWorldCollisions();
     this.resolveVehicleCollisions();
     this.checkVehicleHits();
     this.settleGround(dt);
@@ -178,8 +214,10 @@ export class Player implements System, Renderable, CameraSubject {
 
   private applyMovement(dt: number): void {
     const input = this.host.input;
-    const rawX = (input.isDown('right') ? 1 : 0) - (input.isDown('left') ? 1 : 0);
-    const rawZ = (input.isDown('forward') ? 1 : 0) - (input.isDown('back') ? 1 : 0);
+    // A held pose takes no movement input; the residual velocity still decays.
+    const held = this.pose !== null;
+    const rawX = held ? 0 : (input.isDown('right') ? 1 : 0) - (input.isDown('left') ? 1 : 0);
+    const rawZ = held ? 0 : (input.isDown('forward') ? 1 : 0) - (input.isDown('back') ? 1 : 0);
     // Smoothed axes (1.2): a tap ramps in over `attack`, a release falls over
     // `release`, so nothing in the chain below ever sees a step function.
     const ix = this.smooth.moveX.step(rawX, dt);
@@ -204,7 +242,7 @@ export class Player implements System, Renderable, CameraSubject {
       const dirZ = fz * nz + rz * nx;
       const dirLen = Math.hypot(dirX, dirZ) || 1;
       const top = Math.min(
-        input.isDown('sprint') ? CFG.player.runSpeed : CFG.player.walkSpeed,
+        input.isDown('sprint') && !this.swimming ? CFG.player.runSpeed : CFG.player.walkSpeed,
         this.speedCap,
       );
       const want = top * mag;
@@ -333,6 +371,22 @@ export class Player implements System, Renderable, CameraSubject {
     this.writeMesh(this.pos.x, this.y, this.pos.z, this.heading);
   }
 
+  /**
+   * Leave the ground under your own power: a dive off a rail. Forward at
+   * `DIVE_FORWARD` along `dirX/dirZ`, up at `DIVE_UP`, then the legs' own
+   * gravity brings the arc down onto whatever is below -- the sea, here.
+   */
+  dive(dirX: number, dirZ: number): void {
+    const l = Math.hypot(dirX, dirZ) || 1;
+    this.velX = (dirX / l) * DIVE_FORWARD;
+    this.velZ = (dirZ / l) * DIVE_FORWARD;
+    this.heading = Math.atan2(dirX, dirZ);
+    this.pose = null;
+    this.vaulting = true;
+    this.mesh.jump?.();
+    this.legs.launch(DIVE_UP);
+  }
+
   /** Teleport without clearing health or the respawn point (stepping out of a car). */
   placeAt(x: number, z: number, heading: number): void {
     this.pos.x = x; this.pos.z = z;
@@ -367,6 +421,7 @@ export class Player implements System, Renderable, CameraSubject {
       crouch: this.legs.crouch,
       airborne: this.legs.airborne,
       opacity: 1 - this.fade,
+      pose: this.carry ? 'ride' : this.swimming ? 'swim' : this.pose,
     });
     this.writeMesh(x, y, z, h);
   }

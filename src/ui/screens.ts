@@ -44,6 +44,10 @@ export interface ScreensApi {
   showWrecked(): void;
   showBusted(): void;
   showMissionPassed(reward?: number): void;
+  /** Cinema bars top and bottom, for a cutscene. */
+  showLetterbox(on: boolean): void;
+  /** True while the bars are up. */
+  readonly letterboxed: boolean;
 }
 
 export interface BlipHost { blip(freq?: number): void }
@@ -126,6 +130,15 @@ export function createScreens(uiRoot: HTMLElement, audio: BlipHost): ScreensApi 
   window.addEventListener('mousedown', dismissHandler);
 
   let pulseKind: PulseKind | null = null;
+
+  // --- letterbox: two bars that slide in from the edges ---
+  const barStyle = (edge: string): string =>
+    `position:absolute; left:0; right:0; ${edge}:0; height:12%; background:#000;
+     transform:translateY(${edge === 'top' ? '-100%' : '100%'}); transition:transform ${FADE}s ease; pointer-events:none;`;
+  const barTop = el('div', barStyle('top'));
+  const barBottom = el('div', barStyle('bottom'));
+  root.append(barTop, barBottom);
+  let letterboxed = false;
   let pulseT = 0;
 
   function startPulse(kind: PulseKind, reward?: number): void {
@@ -155,7 +168,7 @@ export function createScreens(uiRoot: HTMLElement, audio: BlipHost): ScreensApi 
       // Loading is over: let the world show through the title card.
       title.style.background = 'linear-gradient(180deg, rgba(10,8,20,0.15), rgba(6,4,14,0.55))';
     },
-    get active(): boolean { return titleVisible || pulseKind !== null; },
+    get active(): boolean { return titleVisible || pulseKind !== null || letterboxed; },
     get titleActive(): boolean { return titleVisible; },
     tick(dt: number): void {
       if (pulseKind) {
@@ -185,5 +198,11 @@ export function createScreens(uiRoot: HTMLElement, audio: BlipHost): ScreensApi 
     showWrecked(): void { startPulse('wrecked'); },
     showBusted(): void { startPulse('busted'); },
     showMissionPassed(reward?: number): void { startPulse('passed', reward); },
+    showLetterbox(on: boolean): void {
+      letterboxed = on;
+      barTop.style.transform = on ? 'translateY(0)' : 'translateY(-100%)';
+      barBottom.style.transform = on ? 'translateY(0)' : 'translateY(100%)';
+    },
+    get letterboxed(): boolean { return letterboxed; },
   };
 }

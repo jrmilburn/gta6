@@ -127,6 +127,38 @@ export function buildPalettes(albedo: THREE.Texture | null): THREE.Texture[] {
   return out;
 }
 
+/**
+ * One recoloured copy of the albedo in a uniform: everything that is not skin
+ * or hair pushed to `hue` at `sat`, and darkened by `light`. The police wear
+ * this; the hue shifts above would only ever make a colourful civilian.
+ */
+export function buildUniformPalette(
+  albedo: THREE.Texture | null, hue: number, sat: number, light: number,
+): THREE.Texture | null {
+  const image = albedo?.image as CanvasImageSource | undefined;
+  if (!image || typeof document === 'undefined') return null;
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = PALETTE_SIZE;
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  if (!ctx) return null;
+  ctx.drawImage(image, 0, 0, PALETTE_SIZE, PALETTE_SIZE);
+  const img = ctx.getImageData(0, 0, PALETTE_SIZE, PALETTE_SIZE);
+  const d = img.data;
+  const hsl = [0, 0, 0], rgb = [0, 0, 0];
+  for (let i = 0; i < d.length; i += 4) {
+    rgbToHsl(d[i], d[i + 1], d[i + 2], hsl);
+    if (isSkinOrHair(hsl[0], hsl[1], hsl[2])) continue;
+    hslToRgb(hue, sat, THREE.MathUtils.clamp(hsl[2] * light, 0.03, 0.9), rgb);
+    d[i] = rgb[0]; d[i + 1] = rgb[1]; d[i + 2] = rgb[2];
+  }
+  ctx.putImageData(img, 0, 0);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.flipY = false;
+  tex.needsUpdate = true;
+  return tex;
+}
+
 /** One palette's material set, keyed by the source material name. */
 export function buildPaletteMaterials(
   source: CharacterSource, palettes: THREE.Texture[],

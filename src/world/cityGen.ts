@@ -25,6 +25,25 @@ export const BOARDWALK: AABB = { minX: -HALF_X, maxX: HALF_X, minZ: -HALF_Z - 46
 /** Sand runs from the paved edge out to here; water starts a little inside it. */
 export const SAND_EDGE = -HALF_Z - 96;
 export const WATER_EDGE = -HALF_Z - 74;
+/** Where the water surface sits (water.ts); swimming happens a little above it. */
+export const SEA_LEVEL = -1.1;
+
+/**
+ * The pier: off the boardwalk at the spawn, 150 m out over the water. Wide
+ * enough to drive down, with a ferris wheel near the end.
+ */
+export const PIER: AABB = { minX: -8, maxX: 8, minZ: BOARDWALK.minZ - 150, maxZ: BOARDWALK.minZ };
+export const PIER_WHEEL = { x: 0, z: PIER.minZ + 22, hubY: 12.3, radius: 11.3, gondolas: 12 };
+/** Kiosk footprints down both sides, and the lamp posts on the centreline. */
+export const PIER_KIOSKS: Array<{ x: number; z: number; name: string }> = [
+  { x: -5.6, z: PIER.maxZ - 30, name: 'Cabana Snacks' },
+  { x: 5.6, z: PIER.maxZ - 42, name: 'Tidewater Bait' },
+  { x: -5.6, z: PIER.maxZ - 58, name: 'Lumo Arcade' },
+  { x: 5.6, z: PIER.maxZ - 70, name: 'Palma Ices' },
+  { x: -5.6, z: PIER.maxZ - 86, name: 'Solstice Gifts' },
+  { x: 5.6, z: PIER.maxZ - 98, name: 'Verano Churros' },
+];
+export const PIER_LAMP_SPACING = 18;
 
 export const PASTELS = [0xa9e5cd, 0xffd0b0, 0xff9a9e, 0xa6d5ea, 0xc7b4e3, 0xfaefd6, 0x79d3ba, 0xefece0];
 export const COOL = [0xc9dcee, 0xa9c6de, 0xdfeaf4, 0x93b4cf, 0xeaf2f8];
@@ -330,6 +349,25 @@ export function generateCity(rng: Rng): CityLayout {
     for (const s of list) {
       colliders.push({ minX: s.pos.x - 0.15, maxX: s.pos.x + 0.15, minZ: s.pos.z - 0.15, maxZ: s.pos.z + 0.15 });
     }
+  }
+
+  // The pier's solid parts: railings down both sides and across the end (the
+  // boardwalk end is open, so a car can drive on), the kiosks, the lamp posts
+  // and the wheel's legs. The deck itself is a ground height, not a collider.
+  const rail = 0.25;
+  colliders.push(
+    { minX: PIER.minX - rail, maxX: PIER.minX + rail, minZ: PIER.minZ, maxZ: PIER.maxZ - 1 },
+    { minX: PIER.maxX - rail, maxX: PIER.maxX + rail, minZ: PIER.minZ, maxZ: PIER.maxZ - 1 },
+    { minX: PIER.minX, maxX: PIER.maxX, minZ: PIER.minZ - rail, maxZ: PIER.minZ + rail },
+  );
+  for (const k of PIER_KIOSKS) {
+    colliders.push({ minX: k.x - 2, maxX: k.x + 2, minZ: k.z - 1.5, maxZ: k.z + 1.5 });
+  }
+  for (let z = PIER.maxZ - 12; z > PIER_WHEEL.z + 14; z -= PIER_LAMP_SPACING) {
+    colliders.push({ minX: -0.15, maxX: 0.15, minZ: z - 0.15, maxZ: z + 0.15 });
+  }
+  for (const x of [-5.2, 5.2]) {
+    colliders.push({ minX: x - 0.7, maxX: x + 0.7, minZ: PIER_WHEEL.z - 1.6, maxZ: PIER_WHEEL.z + 1.6 });
   }
 
   // Mark a midtown building as the police station.

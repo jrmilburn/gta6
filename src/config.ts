@@ -33,6 +33,26 @@ export const CFG = {
      */
     bustRadius: 5,
     bustSpeed: 3.5,
+    /** A unit count only drops once the heat is this far under the star line. */
+    hysteresis: 20,
+    /** Beyond this path distance a unit drives the lane graph; inside it, straight at you. */
+    routeBeyond: 45,
+    /** A wrecked unit is replaced after this long. */
+    replaceWreckAfter: 8,
+    /** Cruisers on patrol at zero stars, driving like traffic. */
+    patrolUnits: 2,
+    /** Roadblocks from this star level, this often, this far ahead. */
+    roadblockStars: 3,
+    roadblockInterval: 20,
+    roadblockAhead: 100,
+    helicopterStars: 5,
+    /** Officers on foot from this star level: how many, how they shoot. */
+    officerStars: 3,
+    officers: 6,
+    officerFireInterval: 1.4,
+    officerDamage: 9,
+    /** An officer steps out when a unit stops this close to the player. */
+    officerExitRange: 25,
   },
   camera: { chaseDist: 8, chaseHeight: 3.2, fovBase: 60, fovAtMaxSpeed: 78, lag: 6 },
   colors: { skyTop: 0x5b3fa0, skyHorizon: 0xffa66b, fog: 0xf5b592, sun: 0xffd9a0, water: 0x2ec4b6 },
@@ -355,6 +375,12 @@ export const CFG = {
       shotKnockdown: 100,
       gunfireNearPolice: 100,
       shootPolice: 150,
+      /** Running somebody over with a car. */
+      runOver: 60,
+      /** Ramming a cruiser while driving. */
+      ramPolice: 100,
+      /** A hard crash (impact over 10 m/s) where a unit can see it. */
+      crashInView: 30,
       /** Radius within which a police car notices gunfire. */
       policeHearing: 40,
       /** Heat per star, and how fast heat bleeds off with nothing happening. */

@@ -5,7 +5,7 @@
 // are indistinguishable from the straight lines they join, and skipping them
 // cuts the per-frame line count roughly 4x on a 12x12 grid (~5k lanes total).
 import type { AABB, Vec2 } from '../types';
-import type { CityLayout } from '../world/cityGen';
+import { BOARDWALK, PIER, type CityLayout } from '../world/cityGen';
 
 const SIZE = 220;
 const CENTER = SIZE / 2;
@@ -54,6 +54,8 @@ export function createMinimap(city: CityLayout): MinimapApi {
   }
   const buildings: AABB[] = [];
   for (const b of city.blocks) for (const bld of b.buildings) buildings.push(bld.bounds);
+  // Timber: the boardwalk and the pier, so the pier reads as somewhere to go.
+  const decks: AABB[] = [BOARDWALK, PIER];
 
   function render(playerPos: Vec2, heading: number, dots: MinimapDots): void {
     const cos = Math.cos(-heading);
@@ -73,6 +75,20 @@ export function createMinimap(city: CityLayout): MinimapApi {
     ctx.clip();
     ctx.fillStyle = 'rgba(10,14,24,0.62)';
     ctx.fillRect(0, 0, SIZE, SIZE);
+
+    // Decks: a warm timber tint under everything else.
+    ctx.fillStyle = 'rgba(196,150,96,0.55)';
+    for (const b of decks) {
+      if (!nearAabb(b, playerPos.x, playerPos.z, CULL_RADIUS_M)) continue;
+      const [x1, y1] = project(b.minX, b.minZ);
+      const [x2, y2] = project(b.maxX, b.minZ);
+      const [x3, y3] = project(b.maxX, b.maxZ);
+      const [x4, y4] = project(b.minX, b.maxZ);
+      ctx.beginPath();
+      ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.lineTo(x3, y3); ctx.lineTo(x4, y4);
+      ctx.closePath();
+      ctx.fill();
+    }
 
     // Buildings: darker translucent blocks.
     ctx.fillStyle = 'rgba(20,24,36,0.85)';

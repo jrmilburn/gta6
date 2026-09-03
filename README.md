@@ -101,12 +101,31 @@ body to within 0.1%.
 Punching or shooting a civilian knocks them down. They lie still for a minute,
 then get back up. There is no blood, no gore and nothing dies.
 
-**Not finished yet.** Heat accumulates from knockdowns and gunfire and lights
-the wanted stars, but nothing responds to it: `src/entities/police.ts` is still
-a stub, so there are no police units to dispatch and the "drive to the sound of
-the shot" hook in `src/gameplay/wanted.ts` is wired and inert. A downed
-pedestrian is also not solid to traffic -- a car passes through rather than
-bumping them.
+**Police.** Two cruisers patrol at zero stars, and a crime they witness --
+knocking somebody down, running them over, a shot, a hard crash -- lights the
+first star. Heat then buys units in pursuit (`CFG.police.spawnPerStar`): they
+route across the lane graph while you are far and come straight at you once
+they can see you, siren on. Stand still beside one for three seconds, on foot
+or boxed in, and you are BUSTED. At three stars roadblocks go down ahead of a
+driving player and officers step out to shoot at one on foot; at five the
+helicopter comes. Stay out of every unit's sight for `decaySeconds` and a star
+drops. Nobody dies: the officers' fire wears your health down to a WRECKED
+respawn at the station, the same as being run over.
+
+**The pier.** Off the boardwalk at the spawn. Walk out to the ferris wheel and
+press E under it to ride once round; E at a bench sits, E at the rail leans,
+and E at the end rail is a dive, after which you swim back to the beach. A car
+fits down the middle, and the bollards at the entrance are there to be knocked
+over.
+
+**Traffic lights** cycle at every intersection. Traffic stops on red;
+pedestrians wait at the kerb for the walk phase, walk at their own pace, step
+round each other and round you, stop to look at things, and never turn on the
+spot. Nobody is recycled while the camera can see them.
+
+**Cutscenes.** A few seconds of held camera on a bust, a wreck, three and five
+stars, a roadblock, the first ride on the wheel, the dive and the first car.
+Any movement key skips one after the first second.
 
 ## URL parameters
 
@@ -123,3 +142,5 @@ bumping them.
 | `?assets=0` | Skip the asset load and run fully procedural, to exercise the fallbacks |
 | `?peds=12&traffic=4` | Scale the crowd and the traffic. For measuring against a stated population, and for tests that need the simulation to outrun a software rasteriser |
 | `?shadows=0` | Drop the shadow pass. A throughput switch for tests, never a gameplay one |
+| `?signals=0` | Traffic lights keep cycling but stop controlling traffic and pedestrians |
+| `?ticks=20` | Let one rendered frame simulate up to N fixed ticks. For the smoke suite on a software rasteriser, where a frame is most of a second; never for a player |

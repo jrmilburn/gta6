@@ -46,7 +46,7 @@ interface Chassis {
   wheelGeo: THREE.BufferGeometry | null;
   wheelMaterial: THREE.Material;
   wheelRadius: number;
-  wheels: Array<{ x: number; y: number; z: number; front: boolean }>;
+  wheels: Array<{ x: number; y: number; z: number; front: boolean; mirror: boolean }>;
   lights: Lights;
   lightBar: boolean;
   /** True when the body already has its lights in its texture. */
@@ -157,6 +157,7 @@ function proceduralChassis(kind: VehicleKind, color: number, hero: boolean): Cha
       y: WHEEL_RADIUS,
       z: i < 2 ? spec.axleZ : -spec.axleZ,
       front: i < 2,
+      mirror: false,
     })),
     lights: { head: spec.head, tail: spec.tail },
     lightBar: spec.lightBar,
@@ -271,6 +272,9 @@ export class VehicleMesh {
       yaw.position.set(slot.x, slot.y, slot.z);
       const spin = new THREE.Group();
       const wheel = new THREE.Mesh(wheelGeo ?? undefined, wheelMat);
+      // The kit's wheel has a hub on one face only; the far side of the car
+      // gets it mirrored so the hub faces out on both.
+      if (slot.mirror) wheel.scale.x = -1;
       wheel.castShadow = true;
       spin.add(wheel);
       yaw.add(spin);

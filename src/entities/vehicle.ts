@@ -161,10 +161,20 @@ export class Vehicle implements VehicleState, System, Renderable {
     this.prev.heading = this.heading;
   }
 
+  /**
+   * Walkable-surface height, shared by every vehicle: the boardwalk and the
+   * pier are decks 0.32 m up, and a car on them used to sit axle-deep in the
+   * planks. Set once from the session; the flat world is the default.
+   */
+  static groundAt: (x: number, z: number) => number = () => 0;
+
   update(dt: number): void {
     const prevSpeed = this.speed;
     this.snapshot();
     this.integrate(dt);
+    // Onto the deck and off it again: a kerb-height step, blended.
+    const groundY = Vehicle.groundAt(this.pos.x, this.pos.z);
+    this.y += (groundY - this.y) * Math.min(1, dt * 10);
     this.resolveWorld();
     this.resolvePeers();
     this.longAccel = (this.speed - prevSpeed) / dt;

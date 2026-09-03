@@ -76,7 +76,11 @@ export type EventName =
   | 'punchHit'
   | 'shotHit'
   | 'goofyChanged'
-  | 'armedChanged';
+  | 'armedChanged'
+  | 'roadblock'
+  | 'officerShot'
+  | 'cutsceneStart'
+  | 'cutsceneEnd';
 
 export interface GameEvents {
   on(evt: EventName, fn: (payload?: unknown) => void): void;

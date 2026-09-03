@@ -78,7 +78,7 @@ export function knockDownPed(
  */
 export function stepDown(
   p: Downable, dt: number, player: Vec2,
-  recycle: () => void, resume: () => void, renderer: PedRenderer,
+  canDespawn: () => boolean, recycle: () => void, resume: () => void, renderer: PedRenderer,
 ): void {
   p.downT += dt;
   p.speed = 0;
@@ -88,7 +88,8 @@ export function stepDown(
     p.fallClip = renderer.pickFall();
   }
   if (p.fallRate > 0 && p.downT >= K.downSeconds) {
-    if (Math.hypot(p.pos.x - player.x, p.pos.z - player.z) > K.despawnDistance) {
+    // Far away AND off screen: the body may leave. In view, it gets up.
+    if (Math.hypot(p.pos.x - player.x, p.pos.z - player.z) > K.despawnDistance && canDespawn()) {
       recycle();
       return;
     }

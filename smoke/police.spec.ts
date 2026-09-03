@@ -24,7 +24,7 @@ test.use({ viewport: { width: 900, height: 620 } });
 const BUST_SECONDS = 3;
 
 async function boot(page: Page): Promise<void> {
-  await page.goto('/?nohud=1&peds=10&traffic=6&intro=0');
+  await page.goto('/?nohud=1&peds=10&traffic=6&intro=0&ticks=20');
   await page.waitForFunction(
     () => (window as unknown as { __game?: { ready: boolean } }).__game?.ready === true,
     null, { timeout: 90_000 },
@@ -178,4 +178,131 @@ test('police answer the wanted level, close in, and can bust the player', async 
   expect(busted.count, 'standing still next to a cruiser should end in a bust').toBe(1);
   expect(busted.heat, 'a bust clears the heat').toBe(0);
   expect(busted.live, 'and sends everybody home').toBe(0);
+});
+
+// --- the refinement pass: the rest of section 9 ----------------------------------
+
+interface Full {
+  stars: number; active: number; patrolling: number; heli: boolean; roadblock: boolean;
+  officers: number; shots: number; health: number; onFoot: boolean;
+}
+
+async function full(page: Page): Promise<Full> {
+  return page.evaluate(() => {
+    const s = (window as unknown as {
+      __session: {
+        wanted: { level: number };
+        police: { active: number; patrolling: number; helicopter: { active: boolean }; lastRoadblock: unknown };
+        officers: { active: number; shots: number } | null;
+        player: { health: number; onFoot: boolean };
+      };
+    }).__session;
+    return {
+      stars: s.wanted.level, active: s.police.active, patrolling: s.police.patrolling,
+      heli: s.police.helicopter.active, roadblock: s.police.lastRoadblock !== null,
+      officers: s.officers?.active ?? 0, shots: s.officers?.shots ?? 0,
+      health: s.player.health, onFoot: s.player.onFoot,
+    };
+  });
+}
+
+test('patrols at zero stars, and a witnessed crime lights the first', async ({ page }) => {
+  test.setTimeout(900_000);
+  await boot(page);
+  const calm = await full(page);
+  console.log(`clean: ${calm.patrolling} on patrol, ${calm.active} chasing`);
+  expect(calm.patrolling).toBe(2);
+  expect(calm.active).toBe(0);
+
+  // A crime nobody sees is nobody's business.
+  await run(page, `window.__game.game.events.emit('pedHit', { x: window.__session.player.pos.x, z: window.__session.player.pos.z })`);
+  await sim(page, 0.5);
+  expect((await full(page)).stars, 'unseen: no stars').toBe(0);
+
+  // The same crime with a patrol car nose to nose.
+  await run(page, `(() => {
+    const s = window.__session;
+    const me = s.player.pos;
+    const patrol = s.police.cars.find((c) => c.group.visible);
+    patrol.reset(me.x + 8, me.z, Math.PI);
+  })()`);
+  await sim(page, 0.3);
+  await run(page, `window.__game.game.events.emit('pedHit', { x: window.__session.player.pos.x, z: window.__session.player.pos.z })`);
+  await sim(page, 1.5);
+  const seen = await full(page);
+  console.log(`witnessed: ${seen.stars} stars, ${seen.active} chasing, ${seen.patrolling} patrolling`);
+  expect(seen.stars, 'witnessed: a star').toBeGreaterThanOrEqual(1);
+  expect(seen.active, 'the patrol joins the chase').toBeGreaterThanOrEqual(1);
+});
+
+test('five stars: helicopter, roadblocks, and a wreck is replaced', async ({ page }) => {
+  test.setTimeout(1_200_000);
+  await page.goto('/?nohud=1&peds=0&traffic=0&intro=0&stars=5&car=sports&post=0&shadows=0&ticks=20');
+  await page.waitForFunction(
+    () => (window as unknown as { __game?: { ready: boolean } }).__game?.ready === true,
+    null, { timeout: 90_000 },
+  );
+  await page.keyboard.press('Enter');
+  await sim(page, 3);
+  const hot = await full(page);
+  console.log(`?stars=5: ${hot.stars} stars, ${hot.active} units, helicopter=${hot.heli}, driving=${!hot.onFoot}`);
+  expect(hot.stars).toBe(5);
+  expect(hot.heli, 'the helicopter is up').toBe(true);
+  expect(hot.active).toBeGreaterThanOrEqual(4);
+  expect(hot.onFoot, 'started in the car').toBe(false);
+
+  // Drive: a roadblock goes down ahead within the interval.
+  await page.evaluate(() => (window as unknown as { __input: { set(c: string, d: boolean): void } }).__input.set('KeyW', true));
+  await sim(page, 26);
+  await page.evaluate(() => (window as unknown as { __input: { set(c: string, d: boolean): void } }).__input.set('KeyW', false));
+  const driven = await full(page);
+  console.log(`after 26 s driving: roadblock=${driven.roadblock}, ${driven.active} units`);
+  await shoot(page, 'five-stars');
+  expect(driven.roadblock, 'a roadblock was placed').toBe(true);
+
+  // Wreck a unit: its slot is refilled.
+  await run(page, `(() => {
+    const s = window.__session;
+    const u = s.police.cars.find((c) => c.group.visible && !c.wrecked);
+    u.damage(10000);
+  })()`);
+  await sim(page, 12);
+  const after = await full(page);
+  console.log(`12 s after a wreck: ${after.active} units chasing`);
+  expect(after.active, 'the wreck was replaced').toBeGreaterThanOrEqual(4);
+});
+
+test('three stars on foot: an officer steps out and shoots', async ({ page }) => {
+  test.setTimeout(1_200_000);
+  await page.goto('/?nohud=1&peds=0&traffic=0&intro=0&stars=3&post=0&shadows=0&ticks=20');
+  await page.waitForFunction(
+    () => (window as unknown as { __game?: { ready: boolean } }).__game?.ready === true,
+    null, { timeout: 90_000 },
+  );
+  await page.keyboard.press('Enter');
+  await sim(page, 1.5);
+  const hasOfficers = await page.evaluate(() => (window as unknown as { __session: { officers: unknown } }).__session.officers !== null);
+  test.skip(!hasOfficers, 'no supplied character, so no officers');
+
+  // Park a unit beside the player: an officer gets out.
+  await run(page, `(() => {
+    const s = window.__session;
+    const me = s.player.pos;
+    const u = s.police.cars.find((c) => c.group.visible && !c.wrecked);
+    u.reset(me.x + 7, me.z, Math.PI);
+  })()`);
+  await page.waitForFunction(
+    () => (window as unknown as { __session: { officers: { active: number } | null } }).__session.officers!.active > 0,
+    null, { timeout: 600_000 },
+  );
+  await sim(page, 6);
+  const out = await full(page);
+  console.log(`officers out: ${out.officers}, shots ${out.shots}, health ${out.health.toFixed(0)}`);
+  await shoot(page, 'officer');
+  expect(out.officers).toBeGreaterThanOrEqual(1);
+  expect(out.shots, 'they shoot').toBeGreaterThan(0);
+  await sim(page, 14);
+  const hurt = await full(page);
+  console.log(`after 20 s under fire: health ${hurt.health.toFixed(0)}, shots ${hurt.shots}`);
+  expect(hurt.health, 'and some of it lands').toBeLessThan(100);
 });

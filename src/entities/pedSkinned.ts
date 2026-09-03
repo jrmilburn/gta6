@@ -267,7 +267,7 @@ export class SkinnedPedRenderer implements PedRenderer {
       dt: this.dt,
       time: this.host.time + p.phase,
       speed: p.speed,
-      turnRate: 0,
+      turnRate: p.turnRate ?? 0,
       grounded: true,
       airborne: false,
       crouch: 0,

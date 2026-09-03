@@ -11,6 +11,8 @@ export class Audio {
   private sirenOsc: OscillatorNode | null = null;
   private sirenGain: GainNode | null = null;
   private sirenT = 0;
+  private rotorGain: GainNode | null = null;
+  private rotorLfo: OscillatorNode | null = null;
   private ambientDelay: DelayNode | null = null;
   private ambientOn = false;
   private ambientTimer: number | null = null;
@@ -63,6 +65,33 @@ export class Audio {
     siren.start();
     this.sirenOsc = siren; this.sirenGain = sg;
 
+    // Rotor: a low, filtered noise loop chopped by a 12 Hz gain LFO -- the
+    // whump of a helicopter you cannot see yet. Silent until asked for.
+    const rotorBuf = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate);
+    const rd = rotorBuf.getChannelData(0);
+    for (let i = 0; i < rd.length; i++) rd[i] = Math.random() * 2 - 1;
+    const rotorSrc = ctx.createBufferSource();
+    rotorSrc.buffer = rotorBuf;
+    rotorSrc.loop = true;
+    const rotorLp = ctx.createBiquadFilter();
+    rotorLp.type = 'lowpass';
+    rotorLp.frequency.value = 180;
+    const chop = ctx.createGain();
+    chop.gain.value = 0.5;
+    const lfo = ctx.createOscillator();
+    lfo.type = 'square';
+    lfo.frequency.value = 12;
+    const lfoDepth = ctx.createGain();
+    lfoDepth.gain.value = 0.5;
+    lfo.connect(lfoDepth).connect(chop.gain);
+    const rotorOut = ctx.createGain();
+    rotorOut.gain.value = 0;
+    rotorSrc.connect(rotorLp).connect(chop).connect(rotorOut).connect(master);
+    rotorSrc.start();
+    lfo.start();
+    this.rotorGain = rotorOut;
+    this.rotorLfo = lfo;
+
     // Ambient loop's shared delay, built once so start/stopAmbient can be cheap.
     const ambDelay = ctx.createDelay(1);
     ambDelay.delayTime.value = 0.28;
@@ -100,6 +129,18 @@ export class Audio {
     this.sirenOsc.frequency.setTargetAtTime((two ? 700 : 900) + drift, t, 0.01);
     const g = Math.max(0, 1 - distance / 140) ** 2 * 0.16;
     this.sirenGain.gain.setTargetAtTime(g, t, 0.15);
+  }
+
+  /** Distance to the helicopter, metres; Infinity for none. */
+  rotor(distance: number): void {
+    if (!this.ctx || !this.rotorGain || !this.rotorLfo) return;
+    const t = this.ctx.currentTime;
+    if (!Number.isFinite(distance) || distance > 220) {
+      this.rotorGain.gain.setTargetAtTime(0, t, 0.4);
+      return;
+    }
+    const g = Math.max(0, 1 - distance / 220) ** 1.5 * 0.5;
+    this.rotorGain.gain.setTargetAtTime(g, t, 0.3);
   }
 
   horn(): void {

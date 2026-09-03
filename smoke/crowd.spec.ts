@@ -8,7 +8,7 @@ import { test, expect, type Page } from '@playwright/test';
 
 test.use({ viewport: { width: 480, height: 270 } });
 
-const QUERY = '?nohud=1&peds=60&traffic=20&post=0&shadows=0';
+const QUERY = '?nohud=1&peds=60&traffic=20&post=0&shadows=0&ticks=20';
 
 async function boot(page: Page): Promise<void> {
   await page.goto(`/${QUERY}&intro=0`);
@@ -50,22 +50,30 @@ test('the crowd stays out of the walls, off the palms, and never teleports', asy
     let worstInside = 0;
     let visibleJump = 0;
     let recycles = 0;
-    const snap = (): Array<{ x: number; z: number; far: number }> => {
+    const snap = (): Array<{ x: number; z: number; far: number; mode: string }> => {
       const p = w.__session.player.pos;
       return w.__session.peds.list().map((q) => ({
-        x: q.x, z: q.z, far: Math.hypot(q.x - p.x, q.z - p.z),
+        x: q.x, z: q.z, far: Math.hypot(q.x - p.x, q.z - p.z), mode: q.mode,
       }));
     };
     let prev = snap();
+    let prevT = w.__game.game.time;
     for (let i = 0; i < 60; i++) {
       await wait(0.5);
       const now = snap();
+      // With ?ticks=20 a frame can carry a third of a second, so the gap
+      // between samples is measured rather than assumed.
+      const elapsed = w.__game.game.time - prevT;
+      prevT = w.__game.game.time;
+      // Riders on the ferris wheel pass over the rails and the wheel's legs;
+      // the collider test is two-dimensional and they are twenty metres up.
       worstInside = Math.max(
-        worstInside, w.__session.peds.list().filter((q) => inside(q.x, q.z)).length,
+        worstInside, w.__session.peds.list().filter((q) => q.mode !== 'ride' && inside(q.x, q.z)).length,
       );
       for (let k = 0; k < now.length; k++) {
         const d = Math.hypot(now[k].x - prev[k].x, now[k].z - prev[k].z);
-        if (d <= 4) continue;
+        // Anything up to a flat-out 5 m/s sprint over the gap is a person moving.
+        if (d <= Math.max(4, 5.2 * elapsed)) continue;
         // Recycling moves somebody on purpose, and only ever once they have
         // wandered past 250 m -- far outside anything the player can see. Every
         // other jump is one the player would have watched happen.
@@ -101,4 +109,57 @@ test('the crowd stays out of the walls, off the palms, and never teleports', asy
   expect(r.visibleJump, 'pedestrians should not teleport in view').toBe(0);
   // Palms and the walking line used to sit on the same 1.5 m inset.
   expect(r.closestPalm, 'palms should not stand on the pavement').toBeGreaterThan(0.9);
+});
+
+test('nobody about-faces, and the crowd flows round the player', async ({ page }) => {
+  test.setTimeout(1_200_000);
+  await boot(page);
+
+  const r = await page.evaluate(async () => {
+    const w = window as unknown as {
+      __game: { game: { time: number } };
+      __session: {
+        peds: { recycled: number; list(): Array<{ x: number; z: number; mode: string; heading: number; speed: number }> };
+        player: { pos: { x: number; z: number } };
+      };
+    };
+    const wait = async (secs: number): Promise<void> => {
+      const t = w.__game.game.time + secs;
+      while (w.__game.game.time < t) await new Promise((r) => setTimeout(r, 16));
+    };
+    const wrap = (a: number): number => Math.atan2(Math.sin(a), Math.cos(a));
+    await wait(2);
+    let flips = 0, wanderSamples = 0, idleSeen = 0, waitSeen = 0, crossSeen = 0;
+    let speeds = new Set<number>();
+    let prev = w.__session.peds.list();
+    let prev2 = prev;
+    for (let i = 0; i < 60; i++) {
+      await wait(0.5);
+      const now = w.__session.peds.list();
+      for (let k = 0; k < now.length; k++) {
+        if (now[k].mode === 'idle') idleSeen++;
+        if (now[k].mode === 'wait') waitSeen++;
+        if (now[k].mode === 'cross') crossSeen++;
+        if (now[k].mode === 'wander' && now[k].speed > 0.5) speeds.add(+now[k].speed.toFixed(1));
+        // An about-face: a wanderer, wandering throughout, whose heading has
+        // swung more than 150 degrees in one second. A corner is 90. A
+        // recycle moves somebody to a fresh block with a fresh heading and is
+        // not a turn; it shows as a jump of far more than a stride.
+        if (now[k].mode !== 'wander' || prev[k].mode !== 'wander' || prev2[k].mode !== 'wander') continue;
+        if (Math.hypot(now[k].x - prev2[k].x, now[k].z - prev2[k].z) > 4) continue;
+        wanderSamples++;
+        if (Math.abs(wrap(now[k].heading - prev2[k].heading)) > (150 * Math.PI) / 180) flips++;
+      }
+      prev2 = prev;
+      prev = now;
+    }
+    return { flips, wanderSamples, idleSeen, waitSeen, crossSeen, paces: speeds.size, recycled: w.__session.peds.recycled };
+  });
+
+  console.log(`over 30 s: ${r.flips} about-faces in ${r.wanderSamples} wander samples; `
+    + `${r.idleSeen} idle, ${r.waitSeen} waiting, ${r.crossSeen} crossing samples; `
+    + `${r.paces} distinct walking paces; ${r.recycled} recycled`);
+  expect(r.wanderSamples).toBeGreaterThan(500);
+  expect(r.flips, 'a wanderer never turns on the spot').toBe(0);
+  expect(r.paces, 'people walk at their own pace').toBeGreaterThan(3);
 });

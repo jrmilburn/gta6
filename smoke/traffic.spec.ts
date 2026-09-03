@@ -66,7 +66,7 @@ test('traffic flows without gridlock, pedestrians wander, and scatter when drive
   page.on('console', (m: ConsoleMessage) => { if (m.type() === 'error') errors.push(m.text()); });
   page.on('pageerror', (e) => errors.push(String(e)));
 
-  await page.goto('/?intro=0');
+  await page.goto('/?intro=0&ticks=20');
   await page.waitForFunction(() => (window as unknown as { __game?: { ready: boolean } }).__game?.ready === true, null, { timeout: 180_000 });
   await page.waitForFunction(
     () => Array.isArray((window as unknown as { __session?: { traffic?: { cars: unknown[] } } }).__session?.traffic?.cars),

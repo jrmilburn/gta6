@@ -5,18 +5,23 @@ import { CFG } from '../config';
 import { Input } from './input';
 import { Audio } from './audio';
 import { EventBus } from './events';
-import { param } from './rng';
+import { param, paramNum } from './rng';
 import { buildSky, updateSky, type SkyRig, type TimeOfDay } from '../world/sky';
 import { createPost, type PostChain } from './post';
 
 const STEP = CFG.feel.loop.step;
-const MAX_STEPS = CFG.feel.loop.maxSteps;
+/**
+ * `?ticks=N` raises the cap for the smoke suite: on a software rasteriser a
+ * frame is most of a second, and five ticks a frame makes a thirty-second
+ * measurement a ten-minute wait. Never set for a player.
+ */
+const MAX_STEPS = Math.max(1, Math.floor(paramNum('ticks', CFG.feel.loop.maxSteps)));
 /**
  * Hard cap on how much wall time one frame is allowed to simulate. A tab switch
  * hands back a multi-second delta; without this the world jumps forward on the
  * first frame back (1.1).
  */
-const MAX_FRAME = CFG.feel.loop.maxFrame;
+const MAX_FRAME = param('ticks') !== null ? MAX_STEPS * STEP : CFG.feel.loop.maxFrame;
 
 const FORWARD = new THREE.Vector3();
 const FOCUS = new THREE.Vector3();

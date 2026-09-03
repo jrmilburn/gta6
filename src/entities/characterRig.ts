@@ -30,6 +30,8 @@ const HEIGHT_MIN = 1.75, HEIGHT_MAX = 1.85, HEIGHT_TARGET = 1.8;
  * tuned and the clip is not.
  */
 const AIR_TIME = 2 * Math.sqrt((2 * 1.2) / 22) + CFG.feel.foot.hangTime;
+/** How far the hips come down onto a bench, metres. */
+const SIT_DROP = 0.42;
 
 export interface CharacterFrame {
   dt: number;
@@ -45,6 +47,8 @@ export interface CharacterFrame {
   crouch: number;
   /** 1 solid, 0 invisible; the 0.2 s dissolve at a car door. */
   opacity: number;
+  /** A held whole-body pose: swimming, sitting, leaning, riding. */
+  pose?: 'swim' | 'sit' | 'lean' | 'ride' | null;
 }
 
 export interface RigOptions {
@@ -98,6 +102,7 @@ export class CharacterRig {
    * looks like a glitch rather than a knockdown.
    */
   frozen = false;
+  private drop = 0;
 
   constructor(source: CharacterSource, opts: RigOptions = {}) {
     this.root = cloneSkeleton(source.scene);
@@ -326,6 +331,11 @@ export class CharacterRig {
     this.mixer.update(this.frozen ? 0 : dt);
     this.flourish.step(f, dt, this.dancing, this.aimAmount, this.aimPitch);
     this.skins.setOpacity(f.opacity);
+    // Sitting lowers the whole body onto the seat; the bent legs are the
+    // flourish's. Eased so standing up is a rise, not a pop.
+    const wantDrop = f.pose === 'sit' ? SIT_DROP : 0;
+    this.drop += (wantDrop - this.drop) * Math.min(1, dt * 8);
+    this.root.position.y = -this.drop;
   }
 
   /**

@@ -55,6 +55,16 @@ export class Legs {
     this.hangLeft = 0;
   }
 
+  /** Leave the ground now at `upSpeed`, no wind-up: a dive, a shove. */
+  launch(upSpeed: number): void {
+    this.phase = 'air';
+    this.grounded = false;
+    this.airborne = true;
+    this.vel = upSpeed;
+    this.hangLeft = 0;
+    this.crouch = 0;
+  }
+
   step(dt: number, jumpPressed: boolean): void {
     this.justLanded = false;
     if (this.phase === 'ground' && jumpPressed) {

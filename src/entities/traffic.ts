@@ -6,6 +6,7 @@ import type { Game } from '../core/game';
 import { CFG } from '../config';
 import { Rng } from '../core/rng';
 import type { CityLayout } from '../world/cityGen';
+import type { SignalSystem } from '../world/signals';
 import { Vehicle } from './vehicle';
 
 const KINDS: VehicleKind[] = ['sedan', 'sports', 'pickup'];
@@ -18,6 +19,14 @@ const FOLLOW_CONE_COS = Math.cos(Math.PI / 6);
 const INTERSECTION_RADIUS = CFG.city.roadWidth * 0.8;
 const HONK_INTERVAL = 2.5;
 const STEER_GAIN = 2.4;
+/**
+ * Where a car starts braking for a red, metres before the end of its lane
+ * (the lane ends at the kerb line of the intersection, which is the stop
+ * line). Cruise is 14 m/s and the arcade brake stops that in about ten metres.
+ */
+const STOP_ZONE = 13;
+/** Inside this, an amber is driven through rather than braked for. */
+const AMBER_COMMIT = 7;
 
 interface AiCar {
   car: Vehicle;
@@ -51,6 +60,12 @@ function pointAtArc(lane: Lane, arc: number): Vec2 {
   return pts[pts.length - 1];
 }
 
+/** Which road axis a straight segment lane runs along. */
+function laneAxis(lane: Lane): 'x' | 'z' {
+  const a = lane.points[0], b = lane.points[lane.points.length - 1];
+  return Math.abs(b.x - a.x) >= Math.abs(b.z - a.z) ? 'x' : 'z';
+}
+
 function headingAlong(lane: Lane, arc: number): number {
   const p = pointAtArc(lane, arc);
   const ahead = pointAtArc(lane, Math.min(lane.length, arc + 1));
@@ -62,6 +77,7 @@ export class TrafficSystem implements System {
   readonly cars: Vehicle[] = [];
   private readonly ai: AiCar[] = [];
   private readonly rng: Rng;
+  private signals: SignalSystem | null = null;
 
   constructor(
     private readonly game: Game,
@@ -72,6 +88,26 @@ export class TrafficSystem implements System {
   ) {
     this.rng = new Rng(seed);
     for (let i = 0; i < CFG.traffic.count; i++) this.spawnOne(i);
+  }
+
+  /** The traffic lights to obey. Without them every intersection is a green. */
+  setSignals(signals: SignalSystem | null): void { this.signals = signals; }
+
+  /**
+   * Should this car be braking for the signal at the end of its lane? Only a
+   * segment lane has a signal ahead (connectors are already inside the box),
+   * and only inside the stop zone; an amber close in is driven through.
+   */
+  private heldBySignal(a: AiCar, lane: Lane): boolean {
+    if (!this.signals || lane.from === lane.to) return false;
+    const enteringNode = laneNodeId(this.city.roads.lanes[a.nextLaneId]);
+    if (enteringNode === null) return false;
+    const remaining = lane.length - a.arc;
+    if (remaining > STOP_ZONE) return false;
+    const phase = this.signals.phaseFor(enteringNode, laneAxis(lane));
+    if (phase === 'green') return false;
+    if (phase === 'amber' && remaining < AMBER_COMMIT) return false;
+    return true;
   }
 
   private pickLane(minDist: number, maxDist: number, behindOnly: boolean): { lane: Lane; arc: number } {
@@ -162,6 +198,11 @@ export class TrafficSystem implements System {
 
     car.controls.handbrake = false;
     a.arc += Math.max(0, car.speed) * dt;
+    // Held at the line: the arc stops at the lane end, so the car cannot creep
+    // through the light on the brake's last half metre per second.
+    if (a.arc >= lane.length && this.heldBySignal({ ...a, arc: lane.length - 0.01 }, lane)) {
+      a.arc = lane.length - 0.01;
+    }
     let guard = 0;
     while (a.arc >= lane.length && guard++ < 4) {
       a.arc -= lane.length;
@@ -185,8 +226,9 @@ export class TrafficSystem implements System {
 
     const paused = this.game.time < a.pausedUntil;
     const blocked = this.blockedAhead(a, playerVehicle);
+    const held = this.heldBySignal(a, lane);
     let throttle: number;
-    if (paused || blocked.blocked) {
+    if (paused || blocked.blocked || held) {
       throttle = car.speed > 0.3 ? -1 : 0;
       steer *= 0.2;
     } else if (car.speed < CFG.traffic.cruiseSpeed) {

@@ -38,7 +38,11 @@ export interface PosablePed {
   heading: number;
   speed: number;
   phase: number;
-  mode: 'wander' | 'cross' | 'flee' | 'tumble' | 'down' | 'return';
+  mode: 'wander' | 'cross' | 'flee' | 'tumble' | 'down' | 'return' | 'idle' | 'wait' | 'ride';
+  /** Their own walking pace, so the gait can be scaled to the speed actually made. */
+  walkSpeed?: number;
+  /** Heading change this frame, rad/s, for the turn clip. */
+  turnRate?: number;
   /** Which fall clip a knocked-down pedestrian is playing, and how (section 8). */
   fallClip: string | null;
   /** Negative once they are getting back up, which plays the fall backwards. */
@@ -129,8 +133,12 @@ export function posePed(pool: PedMeshPool, p: PosablePed, dt: number): void {
   } else {
     Q_YAW.setFromAxisAngle(AXIS_Y, p.heading);
     if (p.speed > 0.05) {
+      // The gait follows the speed actually made: a stroll swings slowly and
+      // a run fast, and someone easing to a stop slows their stride first.
       const fleeing = p.mode === 'flee';
-      const amp = fleeing ? 0.75 : 0.45, freq = fleeing ? 7.5 : 4.2;
+      const pace = p.speed / (p.walkSpeed ?? 1.4);
+      const amp = fleeing ? 0.75 : Math.min(0.55, 0.45 * pace);
+      const freq = fleeing ? 7.5 : 4.2 * pace;
       legSwing = Math.sin(p.phase * freq) * amp;
       armSwing = legSwing;
     }

@@ -108,6 +108,9 @@ export class PedMeshPool {
 
       const make = (geo: THREE.BufferGeometry): THREE.InstancedMesh => {
         const mesh = new THREE.InstancedMesh(geo, material, capacityPerVariant);
+        // One mesh spans the whole city and its bounding sphere is never
+        // recomputed as instances move, so the culling test is meaningless.
+        mesh.frustumCulled = false;
         mesh.count = capacityPerVariant;
         // Plan section 0.6: no shadow-casting on instanced props except buildings.
         mesh.castShadow = false;

@@ -23,6 +23,11 @@ export class Flourish {
   private readonly spine: THREE.Bone | null;
   private readonly chest: THREE.Bone | null;
   private readonly hips: THREE.Bone | null;
+  /** Thighs then shins, for the sitting pose. */
+  private readonly legs: Array<THREE.Bone | null>;
+  /** 0..1 blend into the held pose, so it arrives over a few frames. */
+  private poseAmount = 0;
+  private pose: 'swim' | 'sit' | 'lean' | 'ride' | null = null;
   private readonly rightArm: THREE.Bone | null;
   private readonly rightForeArm: THREE.Bone | null;
   private readonly chestRest = new THREE.Vector3(1, 1, 1);
@@ -38,9 +43,56 @@ export class Flourish {
     this.spine = findBone(root, 'Spine');
     this.chest = findBone(root, 'Spine2');
     this.hips = findBone(root, 'Hips');
+    this.legs = [
+      findBone(root, 'LeftUpLeg'), findBone(root, 'RightUpLeg'),
+      findBone(root, 'LeftLeg'), findBone(root, 'RightLeg'),
+    ];
     this.rightArm = findBone(root, 'RightArm');
     this.rightForeArm = findBone(root, 'RightForeArm');
     if (this.chest) this.chestRest.copy(this.chest.scale);
+  }
+
+  /**
+   * Held whole-body poses, without a clip for any of them.
+   *
+   * Swim: the body pitched forward onto the water with the legs trailing.
+   * Sit: thighs forward and shins down, the hips lowered by the rig. Lean:
+   * the spine forward over a rail. Ride: a light sit. All are bone offsets on
+   * top of the idle, blended in over a quarter of a second.
+   */
+  private stepPose(f: CharacterFrame, dt: number): void {
+    const want = f.pose ?? null;
+    if (want !== this.pose) {
+      // Switching directly between two poses passes through the standing pose,
+      // which is what a person does too.
+      if (this.poseAmount <= 0.02 || want === null) { this.pose = want ?? this.pose; }
+    }
+    const target = want === this.pose && want !== null ? 1 : 0;
+    this.poseAmount += (target - this.poseAmount) * Math.min(1, dt * 7);
+    if (this.poseAmount < 0.01) { if (want === null) this.pose = null; return; }
+    const a = this.poseAmount;
+    const [lThigh, rThigh, lShin, rShin] = this.legs;
+    switch (this.pose) {
+      case 'swim':
+        this.offsets.rotate(this.hips, 1, 0, 0, 1.25 * a);
+        this.offsets.rotate(lThigh, 1, 0, 0, -0.25 * a);
+        this.offsets.rotate(rThigh, 1, 0, 0, -0.25 * a);
+        break;
+      case 'sit':
+      case 'ride':
+        this.offsets.rotate(lThigh, 1, 0, 0, -1.45 * a);
+        this.offsets.rotate(rThigh, 1, 0, 0, -1.45 * a);
+        this.offsets.rotate(lShin, 1, 0, 0, 1.5 * a);
+        this.offsets.rotate(rShin, 1, 0, 0, 1.5 * a);
+        this.offsets.rotate(this.spine, 1, 0, 0, 0.12 * a);
+        break;
+      case 'lean':
+        this.offsets.rotate(this.spine, 1, 0, 0, 0.32 * a);
+        this.offsets.rotate(this.hips, 1, 0, 0, 0.1 * a);
+        break;
+      default:
+        break;
+    }
   }
 
   step(f: CharacterFrame, dt: number, dancing: boolean, aim: number, aimPitch: number): void {
@@ -56,6 +108,7 @@ export class Flourish {
 
     this.offsets.rotate(this.spine, 1, 0, 0, this.lean + Math.max(0, -this.squash) * 0.2);
     this.offsets.rotate(this.spine, 0, 0, 1, this.bank);
+    this.stepPose(f, dt);
 
     // Still-and-standing only: 1 at a dead stop, 0 by the time a walk reads.
     const still = dancing ? 0 : 1 - THREE.MathUtils.clamp(f.speed / A.idleSpeed, 0, 1);

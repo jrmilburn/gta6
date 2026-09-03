@@ -212,8 +212,13 @@ export function buildVegetation(layout: CityLayout, assets: Assets): Vegetation 
       const hue = rng.range(-hueJitter, hueJitter);
       const color = new THREE.Color(1 + hue * 1.4, 1 - Math.abs(hue) * 0.4, 1 - hue * 1.4);
 
+      // The first level of detail is decided here, from the spawn, rather
+      // than everyone starting near and the per-frame budget sorting it out:
+      // on a slow machine that first sort took long enough to watch, with
+      // nine hundred full-detail palms in the frame meanwhile.
+      const d0 = Math.hypot(spot.pos.x - layout.spawns.player.x, spot.pos.z - layout.spawns.player.z);
       placements.push({
-        x: spot.pos.x, z: spot.pos.z, species: chosen.index, matrix, color, near: true,
+        x: spot.pos.x, z: spot.pos.z, species: chosen.index, matrix, color, near: d0 < LOD_NEAR,
       });
     }
   };
@@ -248,6 +253,7 @@ export function buildVegetation(layout: CityLayout, assets: Assets): Vegetation 
 
   // --- LOD --------------------------------------------------------------------
   let cursor = 0;
+  let firstPass = true;
   const counts = pairs.map(() => ({ near: 0, far: 0 }));
 
   /** Rewrite every instance matrix from the current near/far assignment. */
@@ -285,7 +291,10 @@ export function buildVegetation(layout: CityLayout, assets: Assets): Vegetation 
       // one LOD step, and the hysteresis band is 8 m wide, so spreading the
       // test over a few frames is invisible and keeps this off the hot path.
       let changed = false;
-      const n = Math.min(LOD_BUDGET, placements.length);
+      // The first frame re-tests everyone: the camera is wherever the intro
+      // put it, which is nowhere near the spawn the build assumed.
+      const n = firstPass ? placements.length : Math.min(LOD_BUDGET, placements.length);
+      firstPass = false;
       for (let k = 0; k < n; k++) {
         const p = placements[cursor];
         cursor = (cursor + 1) % placements.length;

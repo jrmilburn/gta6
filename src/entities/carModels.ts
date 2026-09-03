@@ -32,6 +32,8 @@ export interface WheelSlot {
   y: number;
   z: number;
   front: boolean;
+  /** On the opposite side of the car from the wheel the mesh was taken from: draw it mirrored, hub out. */
+  mirror: boolean;
 }
 
 export interface CarModelData {
@@ -191,14 +193,18 @@ export function prepareCar(assets: Assets, model: CarModel): CarModelData | null
   wheelFlat.geometry.computeBoundingBox();
   const wb = wheelFlat.geometry.boundingBox ?? new THREE.Box3();
   const radius = (wb.max.y - wb.min.y) / 2;
-  wheelFlat.geometry.translate(0, -(wb.min.y + wb.max.y) / 2, 0);
+  // Centred on all three axes, not just the axle height. The kit's wheel mesh
+  // sits off its node in X, so a wheel re-used at the mirrored slots was
+  // pushed inboard on one side of the car and outboard on the other.
+  wheelFlat.geometry.translate(-(wb.min.x + wb.max.x) / 2, -(wb.min.y + wb.max.y) / 2, -(wb.min.z + wb.max.z) / 2);
   bakeVertexColors(wheelFlat.geometry, pixels, false);
   wheelFlat.geometry.computeBoundingBox();
   wheelFlat.geometry.computeBoundingSphere();
 
+  const sampleX = new THREE.Vector3().setFromMatrixPosition(sample.matrixWorld).x;
   const slots: WheelSlot[] = wheelNodes.map((node) => {
     const p = new THREE.Vector3().setFromMatrixPosition(node.matrixWorld);
-    return { x: p.x * scale, y: p.y * scale, z: p.z * scale, front: p.z > 0 };
+    return { x: p.x * scale, y: p.y * scale, z: p.z * scale, front: p.z > 0, mirror: Math.sign(p.x) !== Math.sign(sampleX) };
   });
 
   return { body: bodyFlat.geometry, wheel: wheelFlat.geometry, wheels: slots, wheelRadius: radius };

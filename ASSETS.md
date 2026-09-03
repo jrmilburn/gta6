@@ -65,7 +65,7 @@ placed. Each kit's own `License.txt` is kept next to its models.
 |---|---|---|---|
 | `models/cars/{sedan, sedan-sports, hatchback-sports, truck, police, van, suv}.glb` | [Kenney — Car Kit](https://kenney.nl/assets/car-kit) | CC0 | Vehicle bodies for the kinds with no supplied model: `truck`→pickup, `police`→police. The rest stay loaded as traffic variety and as the fallback if a supplied car is missing. |
 | `models/cars/{wheel-default, wheel-racing}.glb` | Kenney — Car Kit | CC0 | Wheels, kept as separate nodes so steering and rolling still work. |
-| `models/cars/{cone, box}.glb` | Kenney — Car Kit | CC0 | Street clutter. |
+| `models/cars/{cone, box}.glb` | Kenney — Car Kit | CC0 | Street clutter; the cone is also the roadblock cone at three stars. |
 | `models/nature/tree_palm*.glb` (4) | [Kenney — Nature Kit](https://kenney.nl/assets/nature-kit) | CC0 | Palms, beach and boulevard — now the **fallback** behind the supplied palm (see [Props](#props-palm-streetlight-and-traffic-light)). |
 | `models/nature/tree_{oak, detailed, default, fat, small}.glb` | Kenney — Nature Kit | CC0 | Broadleaf trees in parks and residential blocks. |
 | `models/nature/plant_bush*.glb`, `grass*.glb`, `rock_smallA.glb` | Kenney — Nature Kit | CC0 | Shrubs, grass tufts and ground detail. |
@@ -374,11 +374,11 @@ Nature Kit pair, the lamp and the signal to the procedural poles in
 
 | File | Source | Used for | Triangles | Size |
 |---|---|---|---|---|
-| `models/supplied/palm.glb` | `raw/tropical-palm-tree/plalm_3.fbx` | Every palm — beach, boulevard, and the scatter on every block | 3,461 | 233 KB |
-| `models/supplied/palm-far.glb` | same, welded | The same palms beyond 60 m | 919 | 113 KB |
+| `models/supplied/palm.glb` | `raw/tropical-palm-tree/plalm_3.fbx`, edge-collapsed from 3,461 | Every palm — beach, boulevard, and the scatter on every block | 1,406 | 178 KB |
+| `models/supplied/palm-far.glb` | same, collapsed further | The same palms beyond 60 m | 193 | 42 KB |
 | `models/supplied/streetlight.glb` | `raw/psx-style-street-light-kit/StreetLight.zip`, node `StreetLightSingle` | Every streetlight | 82 | 12 KB |
-| `models/supplied/streetlight-double.glb` | same, node `StreetLightDouble` | Reserved for the pier's centreline | 98 | 13 KB |
-| `models/supplied/traffic-light.glb` | `raw/traffic-light/TrafficLight.fbx` | Every signal, four to a block | 2,574 | 309 KB |
+| `models/supplied/streetlight-double.glb` | same, node `StreetLightDouble` | The lamps down the pier's centreline | 98 | 13 KB |
+| `models/supplied/traffic-light.glb` | `raw/traffic-light/TrafficLight.fbx`, welded from 2,574 | Every signal, four to a block | 232 | 100 KB |
 
 **Fitted on height, stood on their own base.** `orientAndFit` sorts the three
 extents and calls the longest "length", which is right for a car and wrong for
@@ -405,6 +405,14 @@ control (right-hand traffic puts a car heading +X on the +Z side of its road,
 so the corner at (maxX, minZ) is its signal, facing −X). `smoke/props.spec.ts`
 checks every one of the 576 signals and a sample of the lamps against the road
 grid, and screenshots to `screens/props/`.
+
+**Budgets.** Nine hundred palms and six hundred signals are instanced, so a
+triangle on either is a thousand on screen. The palm keeps every frond through
+meshoptimizer's edge collapse at 1.4k (the Kenney palm it replaces was 336),
+and the signal's housing is welded to a couple of hundred with each lens a
+thirty-triangle disc. Before that the two together were 850k triangles a
+frame, which the smoke suite's software rasteriser rendered at half a frame a
+second.
 
 **The traffic light is four materials, not one.** Its lens triangles are found
 by what they sample from the albedo — the lenses are the only saturated texels

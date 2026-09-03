@@ -10,6 +10,7 @@ import { generateCity, type CityLayout } from '../world/cityGen';
 import { buildGround } from '../world/ground';
 import { buildBuildings } from '../world/buildings';
 import { buildProps, type PropsBuild } from '../world/props';
+import { SignalSystem } from '../world/signals';
 import { buildVegetation } from '../world/vegetation';
 import { buildStreetProps } from '../world/streetProps';
 import { buildWater } from '../world/water';
@@ -37,7 +38,13 @@ import type { Assets } from './assets';
 import { installEnvironment } from '../world/envMap';
 import { matchSkyToEnvironment } from '../world/sky';
 import { CFG } from '../config';
-import { makeGroundSampler } from '../world/groundHeight';
+import { makeGroundSampler, waterAt } from '../world/groundHeight';
+import { buildPier, type PierBuild } from '../world/pier';
+import { PIER_WHEEL } from '../world/cityGen';
+import { PierSystem } from '../gameplay/pier';
+import { OfficerSystem } from '../entities/policeFoot';
+import { CutsceneDirector, at, type Shot } from '../camera/cutscene';
+
 
 /** Seconds the character takes to dissolve at a car door (feel pass 1.4). */
 const DOOR_FADE = 0.2;
@@ -62,8 +69,17 @@ export interface Session {
   intro: IntroFlight;
   /** Police response, sized by the wanted level. */
   police: PoliceSystem;
+  /** Officers on foot; null without a supplied character. */
+  officers: OfficerSystem | null;
   /** Street furniture, and the traffic-light lenses the signal system drives. */
   props: PropsBuild;
+  /** The traffic lights' clock. */
+  signals: SignalSystem;
+  /** The pier itself, and its interactions: the wheel, the benches, the dive. */
+  pier: PierBuild;
+  pierPlay: PierSystem;
+  /** Short held-camera scenes on the moments that earn one. */
+  cutscene: CutsceneDirector;
   /** `G`: eight seconds of the dance clip, orbit camera and a crowd. */
   dance: DanceSystem;
   /** The player's skinned rig, or null when running on the procedural humanoid. */
@@ -125,6 +141,10 @@ export function createSession(game: Game, assets: Assets, screens?: ScreensApi):
   game.scene.add(props.group);
   const street = buildStreetProps(city, assets);
   if (street) game.scene.add(street);
+  const pier = buildPier(city, assets, game.timeOfDay === 'dusk');
+  game.scene.add(pier.group);
+  const groundAt = makeGroundSampler(city);
+  Vehicle.groundAt = groundAt;
 
   const water = buildWater(game.sky.sunDir);
   game.scene.add(water.mesh);
@@ -147,7 +167,8 @@ export function createSession(game: Game, assets: Assets, screens?: ScreensApi):
     // Kerbs are real: the block slabs sit 0.15 m above the road, and the
     // boardwalk higher still. The player blends onto them (1.3) rather than
     // walking through the side of every sidewalk.
-    groundHeightAt: makeGroundSampler(city),
+    groundHeightAt: groundAt,
+    waterAt,
   });
   player.setRespawnPoint(city.spawns.policeStation);
 
@@ -169,19 +190,36 @@ export function createSession(game: Game, assets: Assets, screens?: ScreensApi):
   // the same peer-collision list as the garage cars below -- the player can
   // crash into and steal them (session.ts is what makes "stealing" work: once
   // E sets `occupied = true` on one, TrafficSystem's update() skips it).
+  const signals = new SignalSystem(city, props.signals, param('signals') !== '0');
   const traffic = new TrafficSystem(game, city, focusPos, () => current);
+  traffic.setSignals(signals);
 
   // Police (section 9). Built before `allVehicles` so its cruisers join the
   // same peer-collision list as everything else: they are ordinary vehicles,
   // and the player can ram them, wreck them and steal them. `wanted` is
   // resolved lazily because the two systems each need the other.
+  const clearLine = (a: Vec2, b: Vec2): boolean =>
+    !city.colliders.some((c) => segmentVsAabb(a.x, a.z, b.x, b.z, c) >= 0);
   const police: PoliceSystem = new PoliceSystem(game, city, {
     player,
     focus: focusPos,
+    velocity: () => (current ? current.velocity : { x: player.speed * Math.sin(player.heading), z: player.speed * Math.cos(player.heading) }),
     playerVehicle: () => current,
     wanted: () => wanted,
-    clearLine: (a, b) => !city.colliders.some((c) => segmentVsAabb(a.x, a.z, b.x, b.z, c) >= 0),
+    clearLine,
+    cone: () => assets.car('cone'),
   });
+  // Officers on foot, when there is a character to be one.
+  const officers = assets.character
+    ? new OfficerSystem(game, assets.character, {
+      player,
+      requests: () => police.officerRequests,
+      stars: () => wanted.level,
+      clearLine,
+      groundAt,
+      blocked: () => screens?.active === true,
+    })
+    : null;
 
   // Every drivable body in the world (garage cars, the spare, traffic and the
   // police) collides with every other one, and is something the player can hit,
@@ -205,6 +243,8 @@ export function createSession(game: Game, assets: Assets, screens?: ScreensApi):
   // Buildings are solid to pedestrians too. The wander path is laid out clear
   // of them, but a flee is a straight line for three seconds.
   peds.setColliders(city.colliders);
+  peds.setSignals(signals);
+  peds.setGround(groundAt);
 
   // The toast lands on the HUD, which does not exist until createUi() below;
   // the indirection is so the dance can be built with everything else it needs
@@ -247,6 +287,7 @@ export function createSession(game: Game, assets: Assets, screens?: ScreensApi):
   // -> pedestrians -> ... -> cameras.
   for (const v of traffic.cars) game.add(v);
   for (const v of police.cars) game.add(v);
+  game.add(signals);
   game.add(traffic);
   game.add(peds);
 
@@ -256,6 +297,11 @@ export function createSession(game: Game, assets: Assets, screens?: ScreensApi):
   game.addRenderable(player);
   for (const v of allVehicles) game.addRenderable(v);
   game.addRenderable(rig);
+
+  // Cutscenes (refinement pass): after the rig, so they overwrite what it
+  // wrote and hand back to it. Short, and only on the moments that earn one.
+  const cutscene = new CutsceneDirector(game, (on) => screens?.showLetterbox(on));
+  game.addRenderable(cutscene);
   game.add({ update: () => { if (game.input.justPressed('camera')) rig.cycle(); } });
 
   // The opening flight, added AFTER the rig so it overwrites what the rig
@@ -279,12 +325,30 @@ export function createSession(game: Game, assets: Assets, screens?: ScreensApi):
     player,
     police: () => police.cars,
     // Line of sight through the same footprints the camera checks.
-    clearLine: (a, b) => !city.colliders.some((c) => segmentVsAabb(a.x, a.z, b.x, b.z, c) >= 0),
+    clearLine,
+    focus: focusPos,
   });
   game.add(wanted);
   // After `wanted`, so a bust clears the heat that the same frame's decay would
   // otherwise put straight back.
   game.add(police);
+  if (officers) game.add(officers);
+  // The crowd keeps clear of the police once there is heat, and runs from
+  // officers on foot at any level.
+  peds.setThreats(() => (wanted.level > 0 ? [...police.positions(), ...(officers?.positions() ?? [])] : (officers?.positions() ?? [])));
+  // `?stars=N`: straight to a chase, for filming and for the tests.
+  const startStars = paramNum('stars', 0);
+  if (startStars > 0) wanted.setStars(startStars);
+  // Shot to zero, or run down, on foot: the heat goes with the respawn, the
+  // same as a bust, or the player would wake up at the station still wanted.
+  game.events.on('wrecked', (payload) => {
+    const o = payload && typeof payload === 'object' ? (payload as { player?: unknown }) : {};
+    if (o.player === undefined) return;
+    wanted.clear();
+    police.standDown();
+    officers?.standDown();
+  });
+  game.events.on('busted', () => officers?.standDown());
 
   const combat = new CombatSystem(game, {
     player,
@@ -292,7 +356,7 @@ export function createSession(game: Game, assets: Assets, screens?: ScreensApi):
     look,
     inVehicle: () => current !== null,
     blocked: () => screens?.active === true,
-    targets: () => peds.targets(),
+    targets: () => (officers ? [...peds.targets(), ...officers.targets()] : peds.targets()),
     vehicles: allVehicles,
     colliders: city.colliders,
     kick: (radians) => rig.kickPitch(radians),
@@ -321,6 +385,21 @@ export function createSession(game: Game, assets: Assets, screens?: ScreensApi):
   });
   game.add(dance);
 
+  // The pier (refinement pass): ride the wheel, sit, lean, dive; cars knock
+  // the bollards over. E goes to a car first, then to the pier.
+  const pierPlay = new PierSystem(game, {
+    player,
+    pier,
+    cameraRig: rig,
+    inVehicle: () => current !== null,
+    blocked: () => screens?.active === true,
+    carNearby: () => findEnterable(allVehicles, player.pos, CFG.player.enterRadius) !== null,
+    vehicles: () => allVehicles,
+    toast: (text, seconds) => toastFn(text, seconds),
+  });
+  game.add(pierPlay);
+  peds.setRiders(() => pierPlay.riderSeats());
+
   // Enter/exit (plan section 5): E toggles between walking and driving the
   // nearest unoccupied, non-wrecked car within CFG.player.enterRadius.
   //
@@ -337,6 +416,8 @@ export function createSession(game: Game, assets: Assets, screens?: ScreensApi):
   game.add({
     update: () => {
       if (!game.input.justPressed('interact')) return;
+      // The pier has E while it is doing something with the player.
+      if (pierPlay.active) return;
       dance.stop();
       if (player.onFoot) {
         const target = findEnterable(allVehicles, player.pos, CFG.player.enterRadius);
@@ -381,6 +462,7 @@ export function createSession(game: Game, assets: Assets, screens?: ScreensApi):
         current = null;
       }
       police.standDown();
+      officers?.standDown();
       wanted.clear();
       player.respawn();
       player.fade = 0;
@@ -391,9 +473,97 @@ export function createSession(game: Game, assets: Assets, screens?: ScreensApi):
     },
   });
 
+  // --- cutscene triggers ------------------------------------------------------------
+  const playerAnchor = () => ({ x: player.pos.x, y: player.y, z: player.pos.z, heading: player.heading });
+  const focusAnchor = () => (current
+    ? { x: current.pos.x, y: current.y, z: current.pos.z, heading: current.heading }
+    : playerAnchor());
+  const nearestUnit = (): Vehicle | null => {
+    let best: Vehicle | null = null, bd = Infinity;
+    const me = focusPos();
+    for (const c of police.cars) {
+      if (!c.group.visible || c.wrecked) continue;
+      const d = Math.hypot(c.pos.x - me.x, c.pos.z - me.z);
+      if (d < bd) { bd = d; best = c; }
+    }
+    return best;
+  };
+  const carAnchor = (v: Vehicle) => () => ({ x: v.pos.x, y: v.y, z: v.pos.z, heading: v.heading });
+
+  game.events.on('busted', () => {
+    const unit = nearestUnit();
+    const where = at({ ...focusPos() }, player.y);
+    const shots: Shot[] = [];
+    if (unit) shots.push({ dur: 1.2, at: carAnchor(unit), az: 40, dist: 4.2, h: 0.5, look: 1.5, fov: 45 });
+    shots.push({ dur: 1.5, at: where, az: 180, dist: 5.5, distTo: 2.8, h: 1.1, look: 1.2, fov: 42 });
+    cutscene.play('busted', shots, { repeatGuard: 0 });
+  });
+  game.events.on('wrecked', (payload) => {
+    const o = payload && typeof payload === 'object' ? (payload as { player?: unknown; vehicle?: unknown }) : {};
+    const mine = o.player !== undefined || (o.vehicle !== undefined && o.vehicle === current);
+    if (!mine) return;
+    const where = at({ ...focusPos() }, current ? current.y : player.y);
+    cutscene.play('wrecked', [{ dur: 2.5, at: where, az: 30, drift: 70, dist: 9, h: 5, look: 0.8, fov: 48 }], { repeatGuard: 0 });
+  });
+  let lastStars = 0;
+  game.events.on('wantedChanged', (payload) => {
+    const stars = (payload as { stars?: number })?.stars ?? 0;
+    const rising = stars > lastStars;
+    lastStars = stars;
+    if (!rising) return;
+    if (stars === CFG.police.helicopterStars) {
+      const heli = police.helicopter;
+      cutscene.play('heli', [{
+        dur: 2.2, at: () => ({ x: heli.position.x, y: 35, z: heli.position.z }), az: 20, drift: 25, dist: 18, h: -6, lookAt: focusAnchor, look: 8, fov: 40,
+      }]);
+      toastFn('Heat: five stars', 1.5);
+    } else if (stars === 3) {
+      const unit = nearestUnit();
+      if (!unit) return;
+      cutscene.play('three', [{ dur: 2, at: carAnchor(unit), az: 200, drift: 30, dist: 6, h: 1.4, lookAt: focusAnchor, look: 1, fov: 42 }]);
+      toastFn('Heat: three stars', 1.5);
+    }
+  });
+  game.events.on('roadblock', (payload) => {
+    const rb = payload as { x: number; z: number };
+    if (!current) return;
+    const car = current;
+    cutscene.play('roadblock', [{ dur: 1.5, at: carAnchor(car), az: 180, dist: 3, h: 1.1, lookAt: at({ x: rb.x, z: rb.z }, 0.5), look: 0.8, fov: 40 }]);
+  });
+  game.events.on('enteredVehicle', (payload) => {
+    const v = (payload as { vehicle?: Vehicle })?.vehicle;
+    if (!v) return;
+    const stolen = v.kind === 'police';
+    if (stolen) toastFn('Stolen: a cruiser', 1.5);
+    cutscene.play(stolen ? 'cruiser' : 'first-car', [{ dur: 1.5, at: carAnchor(v), az: 180, dist: 5, h: 1.0, look: 0.9, fov: 42 }],
+      { repeatGuard: stolen ? 30 : 1e9 });
+  });
+  let pierWas: string = 'none';
+  const wheelFoot = { x: PIER_WHEEL.x, z: PIER_WHEEL.z };
+  game.add({
+    update: () => {
+      const now = pierPlay.activity;
+      if (now !== pierWas) {
+        if (now === 'ride') {
+          cutscene.play('ride', [
+            { dur: 3, at: at({ x: wheelFoot.x, z: wheelFoot.z + 16 }, 1.6), az: 0, dist: 0.01, h: 0, lookAt: playerAnchor, look: 0.8, fov: 55 },
+            { dur: 4, at: playerAnchor, az: 180, dist: 5.5, h: 0.6, look: 1.0, fov: 60, drift: -25 },
+          ], { repeatGuard: 1e9 });
+        } else if (now === 'dive') {
+          const spot = at({ ...player.pos }, player.y);
+          cutscene.play('dive', [
+            { dur: 1.5, at: spot, az: 90, dist: 9, h: 1.2, lookAt: playerAnchor, look: 0.8, fov: 50 },
+            { dur: 1.5, at: spot, az: 180, dist: 7, h: -0.6, lookAt: playerAnchor, look: 0.4, fov: 50 },
+          ], { repeatGuard: 20 });
+        }
+        pierWas = now;
+      }
+    },
+  });
+
   const session: Session = {
     city, vehicles, traffic, peds, player, driver, rig, dance, heroRig, combat, wanted, look,
-    intro, police, props,
+    intro, police, officers, props, signals, pier, pierPlay, cutscene,
     get playerVehicle() { return current; },
     // Assigned below: createUi needs the session it reads state from.
     ui: null as unknown as Ui,
@@ -408,15 +578,16 @@ export function createSession(game: Game, assets: Assets, screens?: ScreensApi):
   game.add({
     update: () => {
       session.ui.setArmed(combat.armed, combat.aiming, combat.shots);
+      session.ui.setMinimapPolice(police.positions());
       session.ui.setGoofy(heroRig?.locomotion.goofy === true);
       session.ui.setLookHint(!look.locked);
       // Tell the player there is a car to get into. Everything else in the
       // game announces itself; a parked car three metres away did not, and a
       // control nobody knows about is a control that does not exist.
       session.ui.setPrompt(
-        current !== null
+        cutscene.active ? null : current !== null
           ? 'E   GET OUT'
-          : (findEnterable(allVehicles, player.pos, CFG.player.enterRadius) ? 'E   GET IN' : null),
+          : (findEnterable(allVehicles, player.pos, CFG.player.enterRadius) ? 'E   GET IN' : pierPlay.prompt),
       );
     },
   });

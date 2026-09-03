@@ -3,8 +3,8 @@
     "palm": {
       "near": {
         "file": "palm.glb",
-        "bytes": 238968,
-        "tris": 3461
+        "bytes": 182152,
+        "tris": 1406
       },
       "fit": {
         "scale": 0.3245,
@@ -49,8 +49,8 @@
     },
     "traffic-light": {
       "file": "traffic-light.glb",
-      "bytes": 316280,
-      "tris": 2574,
+      "bytes": 78440,
+      "tris": 302,
       "fit": {
         "scale": 1.116,
         "height": 3.6,

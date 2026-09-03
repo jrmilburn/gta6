@@ -25,7 +25,7 @@ import zlib from 'node:zlib';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { readGlb, writeGlb } from './glb.mjs';
-import { flattenByMaterial, fitUpright, decimate, packGlbMulti } from './mesh.mjs';
+import { flattenByMaterial, fitUpright, decimate, simplify, weldByPosition, packGlbMulti } from './mesh.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const RAW = path.join(ROOT, 'public/assets/raw');
@@ -160,15 +160,24 @@ function cloneParts(parts) {
 // --- palm ------------------------------------------------------------------------
 /** Metres tall. vegetation.ts rescales per species, so this is only the reference. */
 const PALM_HEIGHT = 7.4;
-const PALM_FAR_TRIS = 900;
+/**
+ * Triangle budgets. Nine hundred palms stand in the city and the near set is
+ * fifty to a hundred of them at once, so the near model is a real cost too:
+ * the export's 3.5k is edge-collapsed to 1.4k, which keeps every frond, and
+ * the far twin is a green stroke at 160.
+ */
+const PALM_NEAR_TRIS = 1400;
+const PALM_FAR_TRIS = 160;
 
-function convertPalm(dir) {
+async function convertPalm(dir) {
   const fbx = findOne(dir, /\.fbx$/i);
   if (!fbx) return null;
   console.log(`palm: ${path.relative(RAW, fbx)}`);
   const { json, bin } = readGlb(fbxToGlb(fbx, 'palm'));
   const parts = flattenByMaterial(json, bin);
   const fit = fitUpright(parts, PALM_HEIGHT, { x: 0, z: 1 });
+  const total = tris(parts);
+  for (const p of parts) await simplify(p.mesh, Math.max(60, Math.round(PALM_NEAR_TRIS * (p.mesh.idx.length / 3) / total)));
   console.log(`  ${fit.height} m tall, crown ${fit.width} x ${fit.depth}, leans (${fit.reach.x}, ${fit.reach.z}) at the top`);
 
   const tex = path.join(dir, 'textures');
@@ -195,7 +204,7 @@ function convertPalm(dir) {
   const far = cloneParts(parts);
   for (const p of far) {
     const share = p.mesh.idx.length / 3 / tris(parts);
-    decimate(p.mesh, Math.max(60, Math.round(PALM_FAR_TRIS * share)));
+    await simplify(p.mesh, Math.max(40, Math.round(PALM_FAR_TRIS * share)));
     // Quarter-size maps: beyond sixty metres a texel is smaller than a pixel.
     p.material = /leaf|leaves/i.test(p.name)
       ? { ...p.material, images: { color: leafColor && encode(leafColor, 'palm-far-leaf-c', 512), normal: leafNormal && encode(leafNormal, 'palm-far-leaf-n', 512) } }
@@ -256,7 +265,9 @@ function convertStreetLights(dir) {
 
 // --- traffic light -------------------------------------------------------------------
 const SIGNAL_HEIGHT = 3.6;
-const SIGNAL_MAX_TRIS = 2600;
+const SIGNAL_MAX_TRIS = 320;
+/** A lens is a disc; thirty triangles is a round one at any distance it is seen from. */
+const LENS_MAX_TRIS = 30;
 
 /**
  * Which lens a texel belongs to, or null for the housing.
@@ -274,7 +285,7 @@ function lensOf([r, g, b]) {
   return null;
 }
 
-function convertTrafficLight(dir) {
+async function convertTrafficLight(dir) {
   const fbx = findOne(dir, /\.fbx$/i);
   if (!fbx) return null;
   console.log(`traffic-light: ${path.relative(RAW, fbx)}`);
@@ -312,10 +323,15 @@ function convertTrafficLight(dir) {
   const fit = fitUpright(parts, SIGNAL_HEIGHT, forward);
   console.log(`  ${fit.height} m tall; lenses face (${forward.x.toFixed(2)}, ${forward.z.toFixed(2)}) in the file, turned to +Z`);
   const before = tris(parts);
+  // Instanced six hundred times, so every triangle here is six hundred. The
+  // lenses are welded to a coarse disc each; the housing is edge-collapsed,
+  // not grid-welded -- a grid weld at this budget took the pole with it.
+  for (const p of parts) if (p.name !== 'housing') decimate(p.mesh, LENS_MAX_TRIS);
   if (before > SIGNAL_MAX_TRIS) {
-    // Weld only the housing; a lens is a few dozen triangles and must stay round.
-    const housing = parts[0];
-    decimate(housing.mesh, SIGNAL_MAX_TRIS - (before - housing.mesh.idx.length / 3));
+    // The export's vertices are unshared, so the collapse must be given a
+    // closed surface first: welded on position, first UV kept per vertex.
+    weldByPosition(parts[0].mesh, 1e-3, true);
+    await simplify(parts[0].mesh, Math.max(160, SIGNAL_MAX_TRIS - LENS_MAX_TRIS * 3));
   }
 
   const images = {
@@ -334,16 +350,16 @@ function convertTrafficLight(dir) {
   return { ...write('traffic-light', parts), fit, forward };
 }
 
-function main() {
+async function main() {
   if (!fs.existsSync(RAW)) { console.log('no raw/; nothing to convert'); return; }
   const dirs = fs.readdirSync(RAW, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name);
   const pick = (re) => { const d = dirs.find((n) => re.test(n)); return d ? path.join(RAW, d) : null; };
   const palmDir = pick(/palm/i), lampDir = pick(/street.?light/i), signalDir = pick(/traffic.?light/i);
 
   const built = {};
-  if (palmDir) built.palm = convertPalm(palmDir); else console.log('palm: no raw/*palm*/ directory');
+  if (palmDir) built.palm = await convertPalm(palmDir); else console.log('palm: no raw/*palm*/ directory');
   if (lampDir) Object.assign(built, convertStreetLights(lampDir)); else console.log('streetlight: no raw/*street*light*/ directory');
-  if (signalDir) built['traffic-light'] = convertTrafficLight(signalDir); else console.log('traffic-light: no raw/*traffic*light*/ directory');
+  if (signalDir) built['traffic-light'] = await convertTrafficLight(signalDir); else console.log('traffic-light: no raw/*traffic*light*/ directory');
 
   fs.mkdirSync(OUT, { recursive: true });
   fs.writeFileSync(
@@ -352,4 +368,4 @@ function main() {
   );
 }
 
-main();
+await main();
