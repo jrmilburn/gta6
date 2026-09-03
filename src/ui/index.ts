@@ -19,6 +19,8 @@ export interface Ui extends System {
   setMinimapMissions(list: readonly Vec2[]): void;
   setMinimapCheckpoint(pos: Vec2 | null): void;
   showTitle(): void;
+  /** Brief centred message, e.g. "Dance!". */
+  toast(text: string, seconds: number): void;
   showWrecked(): void;
   showBusted(): void;
   showMissionPassed(reward?: number): void;
@@ -108,6 +110,7 @@ export function createUi(game: Game, session: Session, existingScreens?: Screens
     setMinimapMissions: (list) => { missions = list; },
     setMinimapCheckpoint: (pos) => { checkpoint = pos; },
     showTitle: () => screens.showTitle(),
+    toast: (text, seconds) => hud.toast(text, seconds),
     showWrecked: () => screens.showWrecked(),
     showBusted: () => screens.showBusted(),
     showMissionPassed: (reward) => screens.showMissionPassed(reward),

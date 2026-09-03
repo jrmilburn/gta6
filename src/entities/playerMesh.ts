@@ -47,6 +47,20 @@ export interface PlayerMeshFrame {
   opacity: number;
 }
 
+/**
+ * Whatever is standing where the player is.
+ *
+ * The procedural humanoid below and the skinned rig in characterRig.ts are both
+ * this: given ground speed, turn rate and the jump phases, put a body on screen.
+ * The controller does not care which it got, and the game still runs with
+ * neither.
+ */
+export interface PlayerVisual {
+  group: THREE.Object3D;
+  update(f: PlayerMeshFrame): void;
+  dispose(): void;
+}
+
 /** One articulated limb: pivot at the joint, child pivot for the second bone. */
 interface Limb {
   root: THREE.Group;

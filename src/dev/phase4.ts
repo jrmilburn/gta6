@@ -97,6 +97,6 @@ export function setup(game: Game): void {
     get cars() { return traffic.cars; },
   };
   (window as unknown as { __peds: unknown }).__peds = {
-    get count() { return peds.mesh.capacityPerVariant * 4; },
+    get count() { return peds.list().length; },
   };
 }

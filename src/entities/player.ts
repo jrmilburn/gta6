@@ -12,7 +12,7 @@ import type { AABB, EventName, Renderable, System, Vec2 } from '../types';
 import { CFG } from '../config';
 import { SpatialHash } from '../core/spatial';
 import { InputSmoother, shortestAngle, smoothDamp, smoothDampAngle } from '../core/smooth';
-import { PlayerMesh } from './playerMesh';
+import { PlayerMesh, type PlayerVisual } from './playerMesh';
 import { Legs } from './playerJump';
 import type { CameraSubject } from '../camera/cameras';
 
@@ -97,6 +97,8 @@ export interface PlayerOptions {
   colliders?: readonly AABB[];
   /** Walkable surface height at a point (kerbs, boardwalk). Flat 0 if absent. */
   groundHeightAt?: (x: number, z: number) => number;
+  /** The body to render. Falls back to the procedural humanoid. */
+  visual?: PlayerVisual | null;
 }
 
 export class Player implements System, Renderable, CameraSubject {
@@ -113,7 +115,7 @@ export class Player implements System, Renderable, CameraSubject {
   /** 0 while the character is fully solid, 1 while faded out for a car entry (1.4). */
   fade = 0;
 
-  readonly mesh = new PlayerMesh();
+  readonly mesh: PlayerVisual;
   readonly legs = new Legs();
 
   private readonly host: PlayerHost;
@@ -141,6 +143,7 @@ export class Player implements System, Renderable, CameraSubject {
     this.groundHeightAt = opts.groundHeightAt ?? (() => 0);
     this.groundY = this.groundHeightAt(this.pos.x, this.pos.z);
     this.y = this.groundY;
+    this.mesh = opts.visual ?? new PlayerMesh();
     host.scene.add(this.mesh.group);
     if (opts.colliders) this.setColliders(opts.colliders);
     this.snapshot();

@@ -39,9 +39,10 @@ const HDRI = { day: 'venice_sunset_1k.hdr', dusk: 'the_sky_is_on_fire_1k.hdr' };
  */
 function stageFor(label: string): string {
   if (label === 'hdri') return 'sky';
-  if (label.startsWith('cars/')) return 'vehicles';
+  if (label === 'character') return 'character';
+  if (label.startsWith('cars/') || label.startsWith('supplied/')) return 'vehicles';
   if (label.startsWith('nature/')) return 'vegetation';
-  if (label.startsWith('props/')) return 'street';
+  if (label.startsWith('props/') || label.startsWith('street/')) return 'street';
   return 'surfaces';
 }
 

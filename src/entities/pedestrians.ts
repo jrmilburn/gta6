@@ -8,7 +8,8 @@ import type { EventName, System, Vec2 } from '../types';
 import { CFG } from '../config';
 import { Rng } from '../core/rng';
 import { blockBounds, HALF_X, HALF_Z, PITCH } from '../world/cityGen';
-import { PedMeshPool, PED_SCALES, PED_VARIANT_COUNT } from './pedMesh';
+import { PED_SCALES } from './pedMesh';
+import { ProceduralPedRenderer, type PedRenderer } from './pedRenderer';
 
 // DECISION: the OBB half-extents below are duplicated from vehicle.ts (module
 // -private there, and that file is outside this phase's ownership) -- they
@@ -23,7 +24,7 @@ const EDGE_LEN = CFG.city.blockSize - 2 * INSET;
 const RECYCLE_DIST = 250;
 const CROSS_PROB = 0.1;
 const CROSS_CHECK_RADIUS = 15;
-import { posePed, TUMBLE_TOSS, TUMBLE_LIE, TUMBLE_GETUP } from './pedPose';
+import { TUMBLE_TOSS, TUMBLE_LIE, TUMBLE_GETUP } from './pedPose';
 
 type PedMode = 'wander' | 'cross' | 'flee' | 'tumble';
 
@@ -122,7 +123,11 @@ function obbContainsPoint(v: PedVehicleLike, px: number, pz: number): boolean {
 }
 
 export class PedestrianSystem implements System {
-  readonly mesh: PedMeshPool;
+  /**
+   * How the crowd is drawn. Either the procedural humanoid or the skinned
+   * character rig (see pedRenderer.ts); nothing below this line knows which.
+   */
+  readonly mesh: PedRenderer;
   private readonly peds: Ped[] = [];
   private readonly rng: Rng;
   private vehicles: readonly PedVehicleLike[] = [];
@@ -131,12 +136,21 @@ export class PedestrianSystem implements System {
     private readonly host: PedHost,
     private readonly playerPos: () => Vec2,
     seed = 424242,
+    renderer?: PedRenderer,
   ) {
     this.rng = new Rng(seed);
     const count = CFG.peds.count;
-    this.mesh = new PedMeshPool(Math.ceil(count / PED_VARIANT_COUNT));
+    this.mesh = renderer ?? new ProceduralPedRenderer(count);
     host.scene.add(this.mesh.group);
     for (let i = 0; i < count; i++) this.peds.push(this.spawnPed(i));
+  }
+
+  /**
+   * Start or stop a crowd dance centred on `centre` (integration pass, 4).
+   * Only pedestrians the renderer is currently drawing in full can join.
+   */
+  setDance(centre: Vec2 | null, radius: number): void {
+    this.mesh.setDance(centre, radius);
   }
 
   /** Vehicles to flee from and be hit by. Reassignable once traffic exists. */
@@ -178,6 +192,7 @@ export class PedestrianSystem implements System {
 
   update(dt: number): void {
     const player = this.playerPos();
+    this.mesh.begin();
     for (const p of this.peds) {
       if (Math.hypot(p.pos.x - player.x, p.pos.z - player.z) > RECYCLE_DIST) this.recycle(p);
 
@@ -371,7 +386,7 @@ export class PedestrianSystem implements System {
   // --- rendering ---------------------------------------------------------------
 
   private updatePose(p: Ped, dt: number): void {
-    posePed(this.mesh, p, dt);
+    this.mesh.pose(p, dt);
   }
 
   dispose(): void { this.mesh.dispose(); }

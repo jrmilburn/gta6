@@ -15,6 +15,10 @@ export class Audio {
   private ambientOn = false;
   private ambientTimer: number | null = null;
   private ambientStep = 0;
+  private beatBus: GainNode | null = null;
+  private beatOn = false;
+  private beatTimer: number | null = null;
+  private beatStep = 0;
   enabled = true;
 
   /** Must be called from a user gesture (browser autoplay policy). */
@@ -167,6 +171,84 @@ export class Audio {
   stopAmbient(): void {
     this.ambientOn = false;
     if (this.ambientTimer !== null) { window.clearTimeout(this.ambientTimer); this.ambientTimer = null; }
+  }
+
+  /**
+   * Four-on-the-floor kick and hi-hat, for the duration of a dance.
+   *
+   * No song, no sample, no melody: the brief rules out real music outright, and
+   * a synthesised kick on the beat is what makes eight seconds of dancing read
+   * as dancing rather than as a bug. Kick on every quarter, hat on every
+   * off-eighth, both built from the same primitives as the horn and the thud.
+   *
+   * DECISION: gain 0.4 is applied on this bus, not on the master. The brief
+   * asks for "master gain 0.4", but turning the global master down to 0.4 for
+   * the duration would dip the engine and the sirens with it -- clearly not the
+   * intent, and audible as a duck every time you press G.
+   */
+  startBeat(bpm: number, gain: number): void {
+    if (!this.ctx || !this.master || this.beatOn) return;
+    this.beatOn = true;
+    this.beatStep = 0;
+    const eighth = 60 / bpm / 2;
+    const bus = this.ctx.createGain();
+    bus.gain.value = gain;
+    bus.connect(this.master);
+    this.beatBus = bus;
+
+    const tick = (): void => {
+      if (!this.beatOn || !this.ctx || !this.beatBus) return;
+      const t = this.ctx.currentTime;
+      if (this.beatStep % 2 === 0) this.kick(t, this.beatBus);
+      else this.hat(t, this.beatBus);
+      this.beatStep = (this.beatStep + 1) % 8;
+      this.beatTimer = window.setTimeout(tick, eighth * 1000);
+    };
+    tick();
+  }
+
+  stopBeat(): void {
+    this.beatOn = false;
+    if (this.beatTimer !== null) { window.clearTimeout(this.beatTimer); this.beatTimer = null; }
+    if (this.beatBus && this.ctx) {
+      // Ride the bus down rather than cutting it: a gain node disconnected
+      // mid-envelope clicks.
+      this.beatBus.gain.setTargetAtTime(0, this.ctx.currentTime, 0.05);
+      const bus = this.beatBus;
+      window.setTimeout(() => bus.disconnect(), 400);
+      this.beatBus = null;
+    }
+  }
+
+  /** Sine dropped from 120 Hz to 45 Hz in 120 ms: the whole of a kick drum. */
+  private kick(t: number, out: GainNode): void {
+    if (!this.ctx) return;
+    const o = this.ctx.createOscillator();
+    o.type = 'sine';
+    o.frequency.setValueAtTime(120, t);
+    o.frequency.exponentialRampToValueAtTime(45, t + 0.12);
+    const g = this.ctx.createGain();
+    g.gain.setValueAtTime(0.9, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.22);
+    o.connect(g).connect(out);
+    o.start(t); o.stop(t + 0.24);
+  }
+
+  private hat(t: number, out: GainNode): void {
+    if (!this.ctx) return;
+    const dur = 0.06;
+    const buf = this.ctx.createBuffer(1, Math.ceil(this.ctx.sampleRate * dur), this.ctx.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / d.length);
+    const src = this.ctx.createBufferSource();
+    src.buffer = buf;
+    const f = this.ctx.createBiquadFilter();
+    f.type = 'highpass';
+    f.frequency.value = 7000;
+    const g = this.ctx.createGain();
+    g.gain.value = 0.22;
+    src.connect(f).connect(g).connect(out);
+    src.start(t);
   }
 
   blip(freq = 880): void {

@@ -26,6 +26,29 @@ export function installShotHook(game: Game, session: Session): void {
     detach(): void {
       session.rig.setSubject(null);
     },
+    /** Hand the camera back to the game, for shots of the game actually running. */
+    attach(): void {
+      session.rig.setSubject(session.player);
+    },
+    /** Stand the player where the crowd is thickest, for the dance shot. */
+    toCrowd(): void {
+      const list = session.peds.list();
+      if (list.length === 0) return;
+      let best = list[0], bestN = -1;
+      for (const a of list) {
+        const n = list.filter((b) => Math.hypot(a.x - b.x, a.z - b.z) < 7).length;
+        if (n > bestN) { bestN = n; best = a; }
+      }
+      session.player.placeAt(best.x, best.z, 0);
+    },
+    /** How far through the current dance we are, 0 when not dancing. */
+    danceTime(): number {
+      return session.dance.active ? session.dance.elapsed : 0;
+    },
+    /** How many pedestrians are dancing along. */
+    dancers(): number {
+      return session.peds.mesh.dancing;
+    },
     look(eye: V3, target: V3, fov: number): void {
       game.camera.position.set(eye[0], eye[1], eye[2]);
       TARGET.set(target[0], target[1], target[2]);

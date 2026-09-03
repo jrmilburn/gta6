@@ -70,7 +70,9 @@ export type EventName =
   | 'missionStart'
   | 'missionPassed'
   | 'missionFailed'
-  | 'cashChanged';
+  | 'cashChanged'
+  | 'danceStart'
+  | 'danceEnd';
 
 export interface GameEvents {
   on(evt: EventName, fn: (payload?: unknown) => void): void;

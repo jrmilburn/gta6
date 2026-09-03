@@ -41,6 +41,8 @@ export interface HudApi {
   setMission(text: string | null): void;
   setTimer(seconds: number | null): void;
   setVisible(v: boolean): void;
+  /** Brief centred message, e.g. "Dance!". Replaces any toast still showing. */
+  toast(text: string, seconds: number): void;
   tick(dt: number, speedKmh: number, healthFrac: number, playerPos: Vec2, heading: number, dots: MinimapDots): void;
 }
 
@@ -81,17 +83,27 @@ export function createHud(uiRoot: HTMLElement, city: CityLayout): HudApi {
   const timer = el('div', 'font-size:24px; margin-top:4px; opacity:0.92;');
   bottomCenter.append(missionText, timer);
 
+  // --- upper centre: transient toast ---
+  // Above the mission line and below the centre of frame, so it never sits over
+  // the character it is announcing.
+  const toastEl = el(
+    'div',
+    'position:absolute; top:22%; left:50%; transform:translateX(-50%); font-size:28px;'
+      + ' opacity:0; transition:opacity 0.18s ease; pointer-events:none;',
+  );
+
   // --- top left: minimap ---
   const topLeft = el('div', 'position:absolute; top:16px; left:16px;');
   const minimap = createMinimap(city);
   topLeft.appendChild(minimap.canvas);
 
-  root.append(topRight, bottomRight, bottomCenter, topLeft);
+  root.append(topRight, bottomRight, bottomCenter, topLeft, toastEl);
   uiRoot.appendChild(root);
 
   let starCount = 0;
   let cashTarget = 0;
   let cashShown = 0;
+  let toastLeft = 0;
 
   function renderStars(): void {
     stars.textContent = STAR_FULL.repeat(starCount) + STAR_EMPTY.repeat(MAX_STARS - starCount);
@@ -119,7 +131,16 @@ export function createHud(uiRoot: HTMLElement, city: CityLayout): HudApi {
     setVisible(v: boolean): void {
       root.style.display = v ? '' : 'none';
     },
+    toast(text: string, seconds: number): void {
+      toastEl.textContent = text;
+      toastEl.style.opacity = '1';
+      toastLeft = seconds;
+    },
     tick(dt, speedKmh, healthFrac, playerPos, heading, dots): void {
+      if (toastLeft > 0) {
+        toastLeft -= dt;
+        if (toastLeft <= 0) toastEl.style.opacity = '0';
+      }
       cashShown += (cashTarget - cashShown) * Math.min(1, dt * CASH_LERP);
       if (Math.abs(cashTarget - cashShown) < 0.5) cashShown = cashTarget;
       cash.textContent = fmtCash(cashShown);

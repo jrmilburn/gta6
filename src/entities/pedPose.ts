@@ -35,6 +35,28 @@ export interface PosablePed {
 }
 
 /**
+ * The body rotation for a tumbling pedestrian: a spin, a flat lie, and an arc
+ * back up onto its feet. Returns false when `p` is not tumbling, in which case
+ * `out` is left alone.
+ *
+ * Shared with the skinned crowd (pedSkinned.ts), which throws the whole rig
+ * with this while its animation holds still.
+ */
+export function tumbleQuat(p: PosablePed, out: THREE.Quaternion): boolean {
+  if (p.mode !== 'tumble') return false;
+  const lieEnd = TUMBLE_TOSS + TUMBLE_LIE;
+  if (p.tumbleT <= TUMBLE_TOSS) {
+    out.setFromAxisAngle(p.tumbleAxis, (p.tumbleT / TUMBLE_TOSS) * Math.PI * 2);
+  } else if (p.tumbleT <= lieEnd) {
+    out.setFromAxisAngle(AXIS_X, Math.PI / 2); // lying flat
+  } else {
+    const u = 1 - Math.min(1, (p.tumbleT - lieEnd) / TUMBLE_GETUP);
+    out.setFromAxisAngle(AXIS_X, (Math.PI / 2) * u); // getting up
+  }
+  return true;
+}
+
+/**
  * Advance `p`'s gait phase and write its pose into the pool.
  *
  * Walking and fleeing are the same curve at different amplitude and frequency;
@@ -46,16 +68,7 @@ export function posePed(pool: PedMeshPool, p: PosablePed, dt: number): void {
   let legSwing = 0, armSwing = 0, armsUp = false;
   let quat = Q_YAW;
 
-  if (p.mode === 'tumble') {
-    const lieEnd = TUMBLE_TOSS + TUMBLE_LIE;
-    if (p.tumbleT <= TUMBLE_TOSS) {
-      Q_TUMBLE.setFromAxisAngle(p.tumbleAxis, (p.tumbleT / TUMBLE_TOSS) * Math.PI * 2);
-    } else if (p.tumbleT <= lieEnd) {
-      Q_TUMBLE.setFromAxisAngle(AXIS_X, Math.PI / 2); // lying flat
-    } else {
-      const u = 1 - Math.min(1, (p.tumbleT - lieEnd) / TUMBLE_GETUP);
-      Q_TUMBLE.setFromAxisAngle(AXIS_X, (Math.PI / 2) * u); // getting up
-    }
+  if (tumbleQuat(p, Q_TUMBLE)) {
     quat = Q_TUMBLE;
   } else {
     Q_YAW.setFromAxisAngle(AXIS_Y, p.heading);

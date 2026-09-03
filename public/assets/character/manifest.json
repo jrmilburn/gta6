@@ -1,0 +1,301 @@
+{
+  "hero": {
+    "file": "hero.glb",
+    "bytes": 2830800,
+    "tris": 53167,
+    "height": 1.82488214969635,
+    "floor": -0.00205378979444504,
+    "nodes": 67
+  },
+  "clips": [
+    {
+      "name": "fall",
+      "role": "many",
+      "file": "anim-fall.glb",
+      "bytes": 78764,
+      "source": "fall-over/Fall Over.fbx",
+      "duration": 2,
+      "channels": 53,
+      "groundSpeed": 0.3707256330744262,
+      "rootMotion": {
+        "x": 0.253606203943491,
+        "y": 0.8614620342850685,
+        "z": 0.7680726554244757,
+        "travel": 0.7414512661488524
+      },
+      "inPlace": false,
+      "rootYawDeg": 39.52
+    },
+    {
+      "name": "fall-2",
+      "role": "many",
+      "file": "anim-fall-2.glb",
+      "bytes": 85620,
+      "source": "fall-over/Falling Down.fbx",
+      "duration": 2.26666665077209,
+      "channels": 53,
+      "groundSpeed": 0.43369993879820856,
+      "rootMotion": {
+        "x": 0.6518806740641594,
+        "y": 0.8973201438784599,
+        "z": 0.8922527232207358,
+        "travel": 0.9830531877157958
+      },
+      "inPlace": false,
+      "rootYawDeg": -1.98
+    },
+    {
+      "name": "run",
+      "role": "ladder",
+      "file": "anim-run.glb",
+      "bytes": 41440,
+      "source": "Fast Run.fbx",
+      "duration": 0.533333361148834,
+      "channels": 53,
+      "groundSpeed": 5.166454580662349,
+      "rootMotion": {
+        "x": 0.03594508580863476,
+        "y": 0.03559821844100952,
+        "z": 2.7554425867274404,
+        "travel": 2.7554425867274404
+      },
+      "inPlace": false,
+      "rootYawDeg": 0
+    },
+    {
+      "name": "dance",
+      "role": "once",
+      "file": "anim-dance.glb",
+      "bytes": 342664,
+      "source": "Gangnam Style.fbx",
+      "duration": 12.3666667938232,
+      "channels": 53,
+      "groundSpeed": 3.522072038540517e-9,
+      "rootMotion": {
+        "x": 1.359264463186264,
+        "y": 0.13563543558120728,
+        "z": 0.24067018926143646,
+        "travel": 4.3556291324472196e-8
+      },
+      "inPlace": true,
+      "rootYawDeg": 0
+    },
+    {
+      "name": "jump",
+      "role": "once",
+      "file": "anim-jump.glb",
+      "bytes": 51632,
+      "source": "Jump.fbx",
+      "duration": 0.933333337306976,
+      "channels": 53,
+      "groundSpeed": 2.4576315017823926,
+      "rootMotion": {
+        "x": 0.1726165972650051,
+        "y": 0.5999671816825867,
+        "z": 2.293789411429316,
+        "travel": 2.293789411429316
+      },
+      "inPlace": false,
+      "rootYawDeg": 0
+    },
+    {
+      "name": "punch",
+      "role": "many",
+      "file": "anim-punch.glb",
+      "bytes": 70300,
+      "source": "punches/Elbow Punching.fbx",
+      "duration": 1.66666662693024,
+      "channels": 53,
+      "groundSpeed": 0.0004429108954642546,
+      "rootMotion": {
+        "x": 0.1052786149084568,
+        "y": 0.05938303470611572,
+        "z": 0.06606933288276196,
+        "travel": 0.0007381848081740613
+      },
+      "inPlace": true,
+      "rootYawDeg": -0.18
+    },
+    {
+      "name": "punch-2",
+      "role": "many",
+      "file": "anim-punch-2.glb",
+      "bytes": 83924,
+      "source": "punches/Punch Combo.fbx",
+      "duration": 2.20000004768372,
+      "channels": 53,
+      "groundSpeed": 0.00028438249518059495,
+      "rootMotion": {
+        "x": 0.05634372681379318,
+        "y": 0.02397632598876953,
+        "z": 0.13812603894621134,
+        "travel": 0.0006256415029577241
+      },
+      "inPlace": true,
+      "rootYawDeg": 0.03
+    },
+    {
+      "name": "punch-3",
+      "role": "many",
+      "file": "anim-punch-3.glb",
+      "bytes": 53316,
+      "source": "punches/Punching (1).fbx",
+      "duration": 1,
+      "channels": 53,
+      "groundSpeed": 2.4850785851713892e-8,
+      "rootMotion": {
+        "x": 0.03187523502856493,
+        "y": 0.042787790298461914,
+        "z": 0.08380126953125,
+        "travel": 2.4850785851713892e-8
+      },
+      "inPlace": true,
+      "rootYawDeg": 0
+    },
+    {
+      "name": "punch-4",
+      "role": "many",
+      "file": "anim-punch-4.glb",
+      "bytes": 60120,
+      "source": "punches/Punching.fbx",
+      "duration": 1.26666665077209,
+      "channels": 53,
+      "groundSpeed": 0,
+      "rootMotion": {
+        "x": 0.08582736644893885,
+        "y": 0.046002984046936035,
+        "z": 0.07891462370753288,
+        "travel": 0
+      },
+      "inPlace": true,
+      "rootYawDeg": 0
+    },
+    {
+      "name": "punch-5",
+      "role": "many",
+      "file": "anim-punch-5.glb",
+      "bytes": 55880,
+      "source": "punches/Right Hook.fbx",
+      "duration": 1.10000002384186,
+      "channels": 53,
+      "groundSpeed": 0.00003919116082971926,
+      "rootMotion": {
+        "x": 0.14608915336430073,
+        "y": 0.13190847635269165,
+        "z": 0.08432672591879964,
+        "travel": 0.00004311027784708135
+      },
+      "inPlace": true,
+      "rootYawDeg": 0
+    },
+    {
+      "name": "jogGoofy",
+      "role": "goofy",
+      "file": "anim-jogGoofy.glb",
+      "bytes": 43992,
+      "source": "running/Goofy Running.fbx",
+      "duration": 0.633333325386047,
+      "channels": 53,
+      "groundSpeed": 1.6319744173087383,
+      "rootMotion": {
+        "x": 0.0358502771705389,
+        "y": 0.0800904631614685,
+        "z": 1.0335836224257946,
+        "travel": 1.0335837846590996
+      },
+      "inPlace": false,
+      "rootYawDeg": -0.01
+    },
+    {
+      "name": "jogBack",
+      "role": "back",
+      "file": "anim-jogBack.glb",
+      "bytes": 48240,
+      "source": "running/Jog Backward.fbx",
+      "duration": 0.800000011920929,
+      "channels": 53,
+      "groundSpeed": 2.173549104980858,
+      "rootMotion": {
+        "x": 0.01571033615618944,
+        "y": 0.1083642840385437,
+        "z": 1.7388393098954111,
+        "travel": 1.7388393098954111
+      },
+      "inPlace": false,
+      "rootYawDeg": 0
+    },
+    {
+      "name": "jog",
+      "role": "ladder",
+      "file": "anim-jog.glb",
+      "bytes": 93252,
+      "source": "running/Jogging.fbx",
+      "duration": 2.56666660308838,
+      "channels": 53,
+      "groundSpeed": 1.8050640617263969,
+      "rootMotion": {
+        "x": 0.06985790934413671,
+        "y": 0.10209661722183228,
+        "z": 4.6329976436682045,
+        "travel": 4.6329976436682045
+      },
+      "inPlace": false,
+      "rootYawDeg": 0
+    },
+    {
+      "name": "slowRun",
+      "role": "ladder",
+      "file": "anim-slowRun.glb",
+      "bytes": 46540,
+      "source": "running/Slow Run.fbx",
+      "duration": 0.733333349227905,
+      "channels": 53,
+      "groundSpeed": 2.8577279624417673,
+      "rootMotion": {
+        "x": 0.02605638891691342,
+        "y": 0.10502797365188599,
+        "z": 2.0956672178581357,
+        "travel": 2.095667217879658
+      },
+      "inPlace": false,
+      "rootYawDeg": 0
+    },
+    {
+      "name": "walk",
+      "role": "ladder",
+      "file": "anim-walk.glb",
+      "bytes": 64360,
+      "source": "running/Strut Walking.fbx",
+      "duration": 1.43333327770233,
+      "channels": 53,
+      "groundSpeed": 0.8850766992520708,
+      "rootMotion": {
+        "x": 0.11902502365410328,
+        "y": 0.03922080993652344,
+        "z": 1.268609884660691,
+        "travel": 1.26860988635693
+      },
+      "inPlace": false,
+      "rootYawDeg": 0
+    },
+    {
+      "name": "pistolFire",
+      "role": "once",
+      "file": "anim-pistolFire.glb",
+      "bytes": 57580,
+      "source": "Shooting.fbx",
+      "duration": 1.16666662693024,
+      "channels": 53,
+      "groundSpeed": 0,
+      "rootMotion": {
+        "x": 0.009072659304365516,
+        "y": 0.010069072246551514,
+        "z": 0.01629415014758706,
+        "travel": 0
+      },
+      "inPlace": true,
+      "rootYawDeg": 0
+    }
+  ],
+  "generated": "2026-09-03"
+}

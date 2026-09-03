@@ -75,6 +75,9 @@ export const CFG = {
       wheelWobbleRate: 9,
     },
 
+    /** How long `G` dances for before it returns you to normal control. */
+    danceSeconds: 8,
+
     /** Camera smoothing (1.5). All values are SmoothDamp smooth-times. */
     camera: {
       chasePos: 0.18,
@@ -92,6 +95,59 @@ export const CFG = {
       shakeTime: 0.35,
       shakeFreq: 22,
     },
+  },
+
+  /**
+   * Skinned-character animation. Everything about *which* clip plays and how
+   * fast, for both the player and the pedestrians sharing the rig.
+   *
+   * DECISION: the brief's speed thresholds (walk 0.3-3.5, jog 3.5-6.5, run
+   * >6.5 m/s) are not used as written, because the clips Joe supplied disagree
+   * with them. Measured at build time from the hips' own root motion, they were
+   * authored at walk 0.89, jog 2.86 and run 5.17 m/s -- so "walk at 3.4 m/s"
+   * would need a timeScale of 3.8 and the feet would skate. The clip's own
+   * authored speed is the threshold instead: the ladder below is built from
+   * character/manifest.json at boot, each clip plays nearest its native rate,
+   * and the numbers here only bound how far it may be pushed. The brief's own
+   * "stride must match ground speed" rule is the one that survives; its
+   * thresholds are the one that could not.
+   */
+  anim: {
+    /** Below this the character is standing, and only the idle pose plays. */
+    idleSpeed: 0.3,
+    /** Crossfade between any two locomotion clips. */
+    blend: 0.2,
+    /** How far a clip's playback may be pushed off its authored rate. */
+    timeScaleMin: 0.6,
+    timeScaleMax: 1.6,
+    /** Synthesised idle (no idle clip was supplied): breath and weight shift. */
+    breathHz: 0.25,
+    breathScale: 0.015,
+    swayHz: 0.17,
+    swayDeg: 1.4,
+    /** Dance crossfades, in and out, seconds. */
+    danceIn: 0.25,
+    danceOut: 0.3,
+    /** Beats per minute of the synthesised dance track, and its bus gain. */
+    danceBpm: 132,
+    danceGain: 0.4,
+    /** How far from the player a pedestrian will join in, metres. */
+    danceJoinRadius: 8,
+    /** Spine lean applied additively after the mixer, degrees. */
+    airLeanDeg: 8,
+    /** Where in the run cycle the frozen airborne pose is taken from, 0..1. */
+    airPhase: 0.25,
+    /** Pedestrians: the N nearest the camera get their own skinned mesh. */
+    skinnedPeds: 16,
+    /** Hysteresis band for the skinned <-> static swap, metres. */
+    skinnedIn: 45,
+    skinnedOut: 55,
+    /**
+     * Cell size for the static pedestrian's vertex-cluster decimation, metres.
+     * Beyond 45 m a pedestrian is about 40 px tall, so 6 cm of welding is
+     * invisible and takes 53k triangles down to something instanceable.
+     */
+    staticCluster: 0.06,
   },
 };
 

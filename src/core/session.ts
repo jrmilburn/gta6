@@ -16,6 +16,10 @@ import { Vehicle, PlayerDriver } from '../entities/vehicle';
 import { initCarModels } from '../entities/carModels';
 import { Player, findEnterable, exitPointFor } from '../entities/player';
 import { FOOT_CAMERA } from '../camera/footCamera';
+import '../camera/orbitCamera';
+import { CharacterRig } from '../entities/characterRig';
+import { SkinnedPedRenderer } from '../entities/pedSkinned';
+import { DanceSystem } from '../entities/dance';
 import { TrafficSystem } from '../entities/traffic';
 import { PedestrianSystem } from '../entities/pedestrians';
 import { CameraRig, cameraModeNames, type CameraModeName } from '../camera/cameras';
@@ -48,6 +52,10 @@ export interface Session {
   playerVehicle: Vehicle | null;
   driver: PlayerDriver;
   rig: CameraRig;
+  /** `G`: eight seconds of the dance clip, orbit camera and a crowd. */
+  dance: DanceSystem;
+  /** The player's skinned rig, or null when running on the procedural humanoid. */
+  heroRig: CharacterRig | null;
 }
 
 /** Release a vehicle's controls so it decelerates naturally once the player steps out. */
@@ -135,9 +143,16 @@ export function createSession(game: Game, assets: Assets, screens?: ScreensApi):
     game.scene.add(v.group);
   }
 
+  // The supplied character, if it loaded. One rig for the player; the crowd
+  // gets its own pool of them (section 5). Both fall back cleanly: without a
+  // character the player is the procedural humanoid and the crowd is the
+  // instanced one, exactly as before.
+  const heroRig = assets.character ? new CharacterRig(assets.character) : null;
+
   const player = new Player(game, {
     pos: city.spawns.player,
     colliders: city.colliders,
+    visual: heroRig,
     // Kerbs are real: the block slabs sit 0.15 m above the road, and the
     // boardwalk higher still. The player blends onto them (1.3) rather than
     // walking through the side of every sidewalk.
@@ -165,8 +180,21 @@ export function createSession(game: Game, assets: Assets, screens?: ScreensApi):
 
   // Pedestrians (plan section 6): sidewalk wanderers that flee and tumble
   // when hit by any of the same vehicles.
-  const peds = new PedestrianSystem(game, () => player.pos);
+  const peds = new PedestrianSystem(
+    game, () => player.pos, 424242,
+    assets.character
+      ? new SkinnedPedRenderer(assets.character, CFG.peds.count, {
+        cameraPosition: game.camera.position,
+        get time() { return game.time; },
+      })
+      : undefined,
+  );
   peds.setVehicles(allVehicles);
+
+  // The toast lands on the HUD, which does not exist until createUi() below;
+  // the indirection is so the dance can be built with everything else it needs
+  // and still reach the UI once there is one.
+  let toastFn: (text: string, seconds: number) => void = () => {};
 
   const rig = new CameraRig(game, city.colliders);
   rig.setSubject(player);
@@ -194,6 +222,19 @@ export function createSession(game: Game, assets: Assets, screens?: ScreensApi):
   game.addRenderable(rig);
   game.add({ update: () => { if (game.input.justPressed('camera')) rig.cycle(); } });
 
+  const dance = new DanceSystem(game, {
+    rig: () => heroRig,
+    player,
+    inVehicle: () => current !== null,
+    // A full-screen state owns the frame; dancing under a WRECKED card is not
+    // the joke it sounds like.
+    blocked: () => screens?.active === true,
+    cameraRig: rig,
+    crowd: (centre, radius) => peds.setDance(centre, radius),
+    toast: (text, seconds) => toastFn(text, seconds),
+  });
+  game.add(dance);
+
   // Enter/exit (plan section 5): E toggles between walking and driving the
   // nearest unoccupied, non-wrecked car within CFG.player.enterRadius.
   //
@@ -210,6 +251,7 @@ export function createSession(game: Game, assets: Assets, screens?: ScreensApi):
   game.add({
     update: () => {
       if (!game.input.justPressed('interact')) return;
+      dance.stop();
       if (player.onFoot) {
         const target = findEnterable(allVehicles, player.pos, CFG.player.enterRadius);
         if (!target) return;
@@ -246,6 +288,7 @@ export function createSession(game: Game, assets: Assets, screens?: ScreensApi):
   game.add({
     update: () => {
       if (!game.input.justPressed('respawn')) return;
+      dance.stop();
       if (current) {
         releaseControls(current);
         current.occupied = false;
@@ -261,7 +304,7 @@ export function createSession(game: Game, assets: Assets, screens?: ScreensApi):
   });
 
   const session: Session = {
-    city, vehicles, traffic, peds, player, driver, rig,
+    city, vehicles, traffic, peds, player, driver, rig, dance, heroRig,
     get playerVehicle() { return current; },
     // Assigned below: createUi needs the session it reads state from.
     ui: null as unknown as Ui,
@@ -270,6 +313,7 @@ export function createSession(game: Game, assets: Assets, screens?: ScreensApi):
   // UI runs last in the system order (plan 1.1), so it renders the state every
   // other system has already settled this step.
   session.ui = createUi(game, session, screens);
+  toastFn = (text, seconds) => session.ui.toast(text, seconds);
   game.add(session.ui);
   session.ui.showTitle();
 

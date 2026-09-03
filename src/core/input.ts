@@ -4,7 +4,7 @@
 export type Action =
   | 'forward' | 'back' | 'left' | 'right'
   | 'handbrake' | 'sprint' | 'interact' | 'camera'
-  | 'hud' | 'respawn' | 'showcase' | 'pause'
+  | 'hud' | 'respawn' | 'showcase' | 'pause' | 'dance'
   | 'up' | 'down';
 
 const BINDINGS: Record<Action, string[]> = {
@@ -20,6 +20,7 @@ const BINDINGS: Record<Action, string[]> = {
   respawn:   ['KeyR'],
   showcase:  ['KeyK'],
   pause:     ['Escape'],
+  dance:     ['KeyG'],
   up:        ['KeyQ'],
   down:      ['KeyE'],
 };

@@ -18,12 +18,34 @@ declare global {
   interface Window {
     __shots: {
       detach(): void;
+      attach(): void;
+      toCrowd(): void;
+      danceTime(): number;
+      dancers(): number;
       look(eye: V3, target: V3, fov: number): void;
       player(): { x: number; y: number; z: number; heading: number };
       spot(kind: 'palm' | 'tree' | 'downtown' | 'residential' | 'beach'): { x: number; z: number } | null;
       carTo(x: number, z: number, heading: number): void;
     };
+    __input: { set(code: string, down: boolean): void; tap(code: string): void };
+    __game: { game: { time: number } };
   }
+}
+
+/** Wait `seconds` of SIMULATED time; the wall clock is not the game's clock. */
+async function sim(page: Page, seconds: number): Promise<void> {
+  await page.evaluate(async (secs: number) => {
+    const end = window.__game.game.time + secs;
+    while (window.__game.game.time < end) await new Promise((r) => setTimeout(r, 30));
+  }, seconds);
+}
+
+/** A screenshot through the game's own camera, mid-motion. */
+async function live(page: Page, name: string): Promise<void> {
+  fs.mkdirSync(DIR, { recursive: true });
+  const file = path.join(DIR, `${name}.png`);
+  await page.screenshot({ path: file });
+  console.log(`screenshot: ${file}`);
 }
 
 async function ready(page: Page, query: string): Promise<void> {
@@ -89,6 +111,52 @@ async function suite(page: Page, query: string, suffix: string): Promise<void> {
     const v = orbit(beach.x, beach.z, 0.9, Math.PI * 0.95, 7.5, 1.9);
     await shoot(page, n('car-beach'), v.eye, v.target, 45);
   }
+
+  await moving(page, n);
+}
+
+/**
+ * The shots that only exist while the game is running: a walk, a run, and the
+ * dance. The camera goes back to the rig for these -- the point of them is what
+ * the player actually sees, and half of it is the camera's own behaviour.
+ */
+async function moving(page: Page, n: (base: string) => string): Promise<void> {
+  await page.evaluate(() => window.__shots.attach());
+  await sim(page, 0.5);
+
+  await page.evaluate(() => window.__input.set('KeyW', true));
+  await sim(page, 2.5);
+  await live(page, n('character-walk'));
+
+  await page.evaluate(() => window.__input.set('ShiftLeft', true));
+  await sim(page, 2.5);
+  await live(page, n('character-run'));
+  await page.evaluate(() => {
+    window.__input.set('KeyW', false);
+    window.__input.set('ShiftLeft', false);
+  });
+  await sim(page, 1.5);
+
+  // Dance, among as many people as the city put in one place.
+  await page.evaluate(() => window.__shots.toCrowd());
+  await sim(page, 1);
+  await page.evaluate(() => window.__input.tap('KeyG'));
+  // Two frames of the orbit: a quarter and a half of the way round, so at least
+  // one of them has the crowd between the camera and the street furniture.
+  await sim(page, 2.2);
+  console.log(`dancers at 2.2s: ${await page.evaluate(() => window.__shots.dancers())}`);
+  await live(page, n('dance'));
+  await sim(page, 2);
+  console.log(`dancers at 4.2s: ${await page.evaluate(() => window.__shots.dancers())}`);
+  await live(page, n('dance-b'));
+
+  // One wide frame from outside the orbit. The dance camera sits 4.5 m out and
+  // frames the player alone by design, which is right for playing and wrong for
+  // showing that the crowd joined in.
+  const me = await page.evaluate(() => window.__shots.player());
+  await page.evaluate(() => window.__shots.detach());
+  const wide = orbit(me.x, me.z, me.y + 1, Math.PI * 0.15, 11, 2.6);
+  await shoot(page, n('dance-wide'), wide.eye, wide.target, 52);
 }
 
 test('day shots', async ({ page }) => { await suite(page, '', ''); });
