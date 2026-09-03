@@ -10,6 +10,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import crypto from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { readGlb, writeGlb } from './glb.mjs';
@@ -42,6 +43,9 @@ const CLIP_NAMES = [
   [/pistol.*back/i, 'pistolBack', 'dir', 180, true],
   [/pistol.*(walk|forward|run)/i, 'pistolWalk', 'dir', 0, true],
   [/pistol ?aim|aiming/i, 'pistolAim', 'once'],
+  // Before the catch-all below, which would otherwise file "Pistol Jump" as a
+  // firing clip on the strength of the word "pistol".
+  [/pistol.*jump|jump.*pistol/i, 'pistolJump', 'once'],
   [/shoot|pistol|fire/i, 'pistolFire', 'once'],
 
   [/goofy/i, 'jogGoofy', 'goofy'],
@@ -300,8 +304,23 @@ function main() {
     console.log('no ' + path.relative(ROOT, RAW) + '; nothing to convert');
     return;
   }
-  const files = findFbx(RAW);
+  let files = findFbx(RAW);
   if (files.length === 0) { console.log('no .fbx in raw/'); return; }
+
+  // Identical files converted twice are not two clips. They arrive whenever a
+  // download is repeated into a new folder, and they are worse than merely
+  // wasteful: the role comes partly from the PATH, so the same Breathing Idle
+  // sitting in raw/ and in raw/pistol/pistol idle/ would be read as both the
+  // standing pose and the armed one. First path wins.
+  const byHash = new Map();
+  files = files.filter((f) => {
+    const h = crypto.createHash('md5').update(fs.readFileSync(f)).digest('hex');
+    const first = byHash.get(h);
+    if (first === undefined) { byHash.set(h, f); return true; }
+    console.log('skip ' + path.relative(RAW, f) + ': identical to '
+      + path.relative(RAW, first));
+    return false;
+  });
 
   const heroFile = files.find((f) => HERO.test(path.basename(f))) || files[0];
   const hero = buildHero(heroFile);

@@ -37,6 +37,8 @@ export interface ScreensApi {
   active: boolean;
   tick(dt: number): void;
   showTitle(): void;
+  /** Dismiss the boot splash programmatically, with no keypress. */
+  hideTitle(): void;
   /** True while the boot splash is still up. */
   readonly titleActive: boolean;
   showWrecked(): void;
@@ -165,6 +167,14 @@ export function createScreens(uiRoot: HTMLElement, audio: BlipHost): ScreensApi 
           pulseKind = null;
         }
       }
+    },
+      /**
+     * Take the splash down without a keypress. The opening flight is the game's
+     * own way in, so when it plays there is nothing to press a key for.
+     */
+    hideTitle(): void {
+      loaded = true;
+      dismissTitle();
     },
     showTitle(): void {
       titleVisible = true;

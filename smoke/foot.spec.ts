@@ -142,7 +142,7 @@ test('walks on foot, enters a car, drives it, and exits beside it', async ({ pag
   page.on('console', (m: ConsoleMessage) => { if (m.type() === 'error') errors.push(m.text()); });
   page.on('pageerror', (e) => errors.push(String(e)));
 
-  await page.goto('/');
+  await page.goto('/?intro=0');
   await page.waitForFunction(() => window.__game?.ready === true, null, { timeout: 30_000 });
   await page.waitForFunction(() => typeof window.__session?.player?.pos?.x === 'number', null, { timeout: 10_000 });
   // Let the shader-compilation frames go by before anything is timed.

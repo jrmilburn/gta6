@@ -82,8 +82,10 @@ export class CharacterRig {
   private readonly flourish: Flourish;
 
   /** Extra pitch applied to the gun arm so it tracks the camera (section 7). */
-  /** Cached measurement of the jump clip's take-off frame; -1 until measured. */
-  private jumpTakeOff = -1;
+  /** Cached take-off frame per jump clip; measuring one means decoding it. */
+  private readonly jumpTakeOff = new Map<string, number>();
+  /** Which jump clip is in the air, so land() stops the right one. */
+  private airborneClip = 'jump';
   private aimPitch = 0;
   private aimAmount = 0;
   private danceWeight = 0;
@@ -266,17 +268,25 @@ export class CharacterRig {
    * cut short by the landing crossfade.
    */
   jump(): number | null {
-    if (!this.has('jump')) return null;
-    if (this.jumpTakeOff < 0) this.jumpTakeOff = this.takeOffOf('jump');
-    const air = Math.max(0.1, this.durationOf('jump') - this.jumpTakeOff);
+    // A jump with the gun out is its own clip, because the arms are doing
+    // something completely different. Falls back to the unarmed one.
+    const name = this.locomotion.armed && this.has('pistolJump') ? 'pistolJump' : 'jump';
+    if (!this.has(name)) return null;
+    let takeOff = this.jumpTakeOff.get(name);
+    if (takeOff === undefined) {
+      takeOff = this.takeOffOf(name);
+      this.jumpTakeOff.set(name, takeOff);
+    }
+    const air = Math.max(0.1, this.durationOf(name) - takeOff);
     const rate = THREE.MathUtils.clamp(air / Math.max(AIR_TIME, 0.1), 1, 1.5);
-    this.playOneShot('jump', { blendIn: 0.1, blendOut: 0.15, timeScale: rate });
-    return this.jumpTakeOff;
+    this.playOneShot(name, { blendIn: 0.1, blendOut: 0.15, timeScale: rate });
+    this.airborneClip = name;
+    return takeOff;
   }
 
   /** The feet are down: hand the body back to the locomotion blend. */
   land(): void {
-    if (this.oneShot.clip === 'jump') this.oneShot.stop();
+    if (this.oneShot.clip === this.airborneClip) this.oneShot.stop();
   }
 
   /**

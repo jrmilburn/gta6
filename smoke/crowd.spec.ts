@@ -11,7 +11,7 @@ test.use({ viewport: { width: 480, height: 270 } });
 const QUERY = '?nohud=1&peds=60&traffic=20&post=0&shadows=0';
 
 async function boot(page: Page): Promise<void> {
-  await page.goto(`/${QUERY}`);
+  await page.goto(`/${QUERY}&intro=0`);
   await page.waitForFunction(
     () => (window as unknown as { __game?: { ready: boolean } }).__game?.ready === true,
     null, { timeout: 90_000 },

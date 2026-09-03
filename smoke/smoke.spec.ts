@@ -41,7 +41,7 @@ async function sampleFps(page: Page, seconds: number): Promise<number> {
 test('boots, renders, holds framerate, no console errors', async ({ page }) => {
   const errors = collectErrors(page);
   const query = process.env.QUERY ?? '';
-  await page.goto(`/${query}`);
+  await page.goto(`/${query}${query ? '&' : '?'}intro=0`);
   await page.waitForFunction(() => (window as unknown as { __game?: { ready: boolean } }).__game?.ready === true, null, { timeout: 30_000 });
   await page.waitForTimeout(4000);
 
@@ -69,7 +69,7 @@ test('runs fully procedural with the asset bundle skipped', async ({ page }) => 
   // shipped with. `?assets=0` takes that path without deleting the files, so
   // the promise is checked rather than asserted.
   const errors = collectErrors(page);
-  await page.goto('/?assets=0&nohud=1');
+  await page.goto('/?assets=0&nohud=1&intro=0');
   await page.waitForFunction(() => (window as unknown as { __game?: { ready: boolean } }).__game?.ready === true, null, { timeout: 60_000 });
   await page.waitForTimeout(4000);
 

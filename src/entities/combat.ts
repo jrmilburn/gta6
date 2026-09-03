@@ -132,11 +132,16 @@ export class CombatSystem implements System, CombatState {
     // `Pistol Idle` is a relaxed hold -- gun out, arms down -- and is the right
     // shape for walking around armed. It is the wrong shape for aiming, and
     // holding it at full weight while aiming was why the character looked like
-    // it was cradling something at its chest. Aiming uses the first frame of
-    // the Shooting clip instead, which is a real sight picture: arms extended,
-    // both hands on the gun.
+    // it was cradling something at its chest.
+    //
+    // Aiming prefers `Pistol Aim`, an authored 7.1 s sight picture that can
+    // simply loop. Before it was supplied the aim pose was the first frame of
+    // the Shooting clip held frozen, which is a real sight picture too and is
+    // still the fallback -- but a firing clip doing double duty as a stance
+    // means the stance cannot breathe and firing has nowhere to return to.
     const idle = rig.has('pistolIdle') ? 'pistolIdle' : 'pistolFire';
-    const aim = rig.has('pistolFire') ? 'pistolFire' : idle;
+    const aim = rig.has('pistolAim') ? 'pistolAim'
+      : rig.has('pistolFire') ? 'pistolFire' : idle;
     const pose = this.aiming ? aim : idle;
 
     // A shot in flight owns the overlay; the pose comes back when it finishes.

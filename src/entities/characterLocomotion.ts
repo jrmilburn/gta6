@@ -41,6 +41,16 @@ interface Directional extends Track {
   armed: boolean;
 }
 
+/**
+ * One direction on the ring, and every clip that travels in it ordered by the
+ * speed it was authored at. `dir: null` is the speed ladder itself, which is
+ * what "straight ahead" means when no armed forward clip is loaded.
+ */
+interface Anchor {
+  angle: number;
+  rungs: Array<{ dir: Directional | null; speed: number }>;
+}
+
 /** The goofy jog: a whole-gait substitute rather than a direction. */
 interface Substitute extends Track {
   replaces: string[];
@@ -180,7 +190,7 @@ export class Locomotion {
    */
   step(speed: number, dt: number, suppress: number): number {
     const targets = new Map<string, number>();
-    const forwardShare = this.splitByDirection(targets);
+    const forwardShare = this.splitByDirection(targets, Math.max(0, speed));
     this.splitBySpeed(speed, forwardShare, targets);
     this.applySubstitutes(targets);
 
@@ -210,28 +220,62 @@ export class Locomotion {
   /**
    * Split the blend between "straight ahead" and the directional clips either
    * side of the current heading. Returns the share the speed ladder keeps.
+   *
+   * Two axes, not one. Around the ring, the current heading is bracketed by the
+   * two nearest directions. Within each of those, the current SPEED is bracketed
+   * across every clip that travels that way -- because a walk backward and a run
+   * backward are both 180 degree clips, and picking between them by angle alone
+   * is picking arbitrarily. It is the same speed ladder logic as straight ahead,
+   * applied per direction.
    */
-  private splitByDirection(targets: Map<string, number>): number {
+  private splitByDirection(targets: Map<string, number>, speed: number): number {
     const usable = this.directions.filter((d) => d.armed === this.armed);
     if (usable.length === 0) return 1;
 
-    // Anchors around the ring: the ladder at 0, every usable clip at its own
-    // angle, and a second copy of any backward clip at the far side, so a
-    // heading just past 180 degrees blends the short way round instead of
-    // sweeping all the way back through forward.
-    const anchors: Array<{ angle: number; dir: Directional | null }> = [{ angle: 0, dir: null }];
+    const anchors = new Map<number, Anchor>();
+    const bucket = (angle: number): Anchor => {
+      // Whole degrees: clip directions are measured from root motion, so two
+      // clips meant to travel the same way land a fraction of a degree apart.
+      const key = Math.round((angle * 180) / Math.PI);
+      let a = anchors.get(key);
+      if (!a) { a = { angle: (key * Math.PI) / 180, rungs: [] }; anchors.set(key, a); }
+      return a;
+    };
+
+    // The ladder is always a rung of the forward anchor, at 0 m/s, even when an
+    // armed forward clip exists. Standing still should hold the idle, not drag
+    // a run clip down to its slowest legal playback rate.
+    bucket(0).rungs.push({ dir: null, speed: 0 });
     for (const d of usable) {
-      anchors.push({ angle: d.angle, dir: d });
-      if (Math.abs(Math.abs(d.angle) - Math.PI) < 1e-3) anchors.push({ angle: -d.angle, dir: d });
+      bucket(d.angle).rungs.push({ dir: d, speed: d.speed });
+      // A second copy of any backward clip at the far side, so a heading just
+      // past 180 degrees blends the short way round instead of sweeping all the
+      // way back through forward.
+      if (Math.abs(Math.abs(d.angle) - Math.PI) < 1e-3) {
+        bucket(-d.angle).rungs.push({ dir: d, speed: d.speed });
+      }
     }
-    anchors.sort((a, b) => a.angle - b.angle);
+    // Above the fastest armed forward clip, hand the forward anchor BACK to the
+    // ladder. An armed walk authored at 2.9 m/s cannot carry a 6.75 m/s run, and
+    // at that speed the character is sprinting with the gun down anyway -- the
+    // ordinary run is the honest clip. Without this the armed forward clip pins
+    // the playback clamp and skates by about a third.
+    const fwd = anchors.get(0);
+    if (fwd && fwd.rungs.some((r) => r.dir !== null)) {
+      const top = this.ladder.reduce((m, r) => Math.max(m, r.speed), 0);
+      const fastestArmed = fwd.rungs.reduce((m, r) => Math.max(m, r.speed), 0);
+      if (top > fastestArmed + 0.05) fwd.rungs.push({ dir: null, speed: top });
+    }
+
+    const ring = [...anchors.values()].sort((a, b) => a.angle - b.angle);
+    for (const a of ring) a.rungs.sort((x, y) => x.speed - y.speed);
 
     const angle = THREE.MathUtils.clamp(this.moveAngle, -Math.PI, Math.PI);
-    let lo = anchors[0], hi = anchors[anchors.length - 1];
-    for (let i = 0; i < anchors.length - 1; i++) {
-      if (angle >= anchors[i].angle && angle <= anchors[i + 1].angle) {
-        lo = anchors[i];
-        hi = anchors[i + 1];
+    let lo = ring[0], hi = ring[ring.length - 1];
+    for (let i = 0; i < ring.length - 1; i++) {
+      if (angle >= ring[i].angle && angle <= ring[i + 1].angle) {
+        lo = ring[i];
+        hi = ring[i + 1];
         break;
       }
     }
@@ -239,10 +283,24 @@ export class Locomotion {
     const t = span > 1e-4 ? THREE.MathUtils.clamp((angle - lo.angle) / span, 0, 1) : 0;
 
     let forwardShare = 0;
-    const put = (a: { angle: number; dir: Directional | null }, w: number): void => {
+    const give = (r: { dir: Directional | null }, w: number): void => {
       if (w <= 1e-4) return;
-      if (a.dir === null) forwardShare += w;
-      else targets.set(a.dir.name, (targets.get(a.dir.name) ?? 0) + w);
+      if (r.dir === null) forwardShare += w;
+      else targets.set(r.dir.name, (targets.get(r.dir.name) ?? 0) + w);
+    };
+    /** Hand one direction's share out across the clips that travel it, by speed. */
+    const put = (a: Anchor, w: number): void => {
+      if (w <= 1e-4) return;
+      const r = a.rungs;
+      let i = 0;
+      while (i < r.length - 1 && r[i + 1].speed <= speed) i++;
+      const a0 = r[i], a1 = r[Math.min(i + 1, r.length - 1)];
+      const gap = a1.speed - a0.speed;
+      // A zero gap means two clips authored at the same speed -- duplicates of
+      // each other. The first wins rather than both playing at half weight.
+      const k = gap > 1e-4 ? THREE.MathUtils.clamp((speed - a0.speed) / gap, 0, 1) : 0;
+      give(a0, w * (1 - k));
+      give(a1, w * k);
     };
     put(lo, 1 - t);
     put(hi, t);

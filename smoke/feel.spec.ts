@@ -30,7 +30,7 @@ declare global {
 const KEYS = ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ShiftLeft', 'Space'] as const;
 
 async function boot(page: Page, query = ''): Promise<void> {
-  await page.goto(`/${query}${query ? '&' : '?'}nohud=1`);
+  await page.goto(`/${query}${query ? '&' : '?'}nohud=1&intro=0`);
   await page.waitForFunction(
     () => (window as unknown as { __game?: { ready: boolean } }).__game?.ready === true,
     null,

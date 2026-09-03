@@ -39,6 +39,24 @@ about.
 
 ## Done
 
+**The pistol set** — `Pistol Run` (2.89 m/s, measured at 0 degrees) is the armed
+forward clip that was missing, `Pistol Run Backward` (3.16) and a second
+`Pistol Strafe` (2.31, measured at -90) give the armed ring a fast rung in every
+direction, `Pistol Aim` (7.1 s) replaces the frozen frame of `Shooting`, and
+`Pistol Jump` plays instead of the unarmed jump whenever the gun is out.
+
+Taking them needed two engine changes. The direction ring used to pick between
+clips by ANGLE alone, so a walk backward and a run backward -- both 180 degree
+clips -- were two anchors at the same angle and one of them silently never
+played; it now brackets the current SPEED within each direction, exactly as the
+forward ladder does. And the forward anchor hands back to the ladder above the
+armed clip's authored speed, because a 2.89 m/s clip cannot carry an 8 m/s
+sprint. Measured after: **0.0% foot slip** forward, backward, both strafes, and
+sprinting with the gun out. `smoke/armed.spec.ts` keeps it that way.
+
+The aim speed cap moved with them, from 2 m/s to **3.5**: that is the fastest
+figure every armed direction can still carry inside the playback clamp.
+
 **Idle** — `Breathing Idle.fbx`, 9.93 s, in place. Picked up as the ladder's
 bottom rung at 0 m/s, so a drift of 0.1 m/s resolves to almost pure idle with no
 threshold to step across. The synthesised stand-in is gone.
@@ -80,29 +98,15 @@ outright.
 
 ---
 
-## Priority 2 — the pistol
+## Priority 2 — what the pistol set still lacks
 
-The armed set is two clips: a strafe and a walk backward, both aimed. Everything
-else about holding a gun is either borrowed from the unarmed set or faked.
+### A walk-speed armed set
+**Mixamo: "Pistol Walk", "Pistol Walk Forward"**
 
-### Pistol run, and pistol walk forward
-**Mixamo: "Pistol Run", "Pistol Walk", "Gun Run"**
-
-The biggest gun gap by a distance, and the direct cause of the sprint-with-gun
-problem you reported. Moving forward while armed plays the **unarmed** jog with
-a pistol pose layered on top, and sprinting armed abandons the stance entirely
-and falls back to the bare unarmed run. There is no forward armed clip at all.
-
-Both a walk-speed and a run-speed version are worth having: the ladder brackets
-whichever two rungs surround the current speed, so two clips cover the whole
-range properly.
-
-### A dedicated aim pose
-**Mixamo: "Pistol Aim", "Aiming Idle"**
-
-Aiming currently holds frame 0 of `Shooting` frozen. It is a real sight picture
-and reads well, but it means the firing clip is doing two jobs. A separate aim
-pose lets `Shooting` become pure recoil.
+Every armed clip except the backward walk is now authored between 2.3 and 3.2
+m/s, so the ring is well covered at speed and thin below it. A walk-paced
+forward clip would give the armed forward anchor a rung between the idle and
+Pistol Run, which is the band you move in while actually aiming at something.
 
 ### Pistol diagonals
 **Mixamo: "Pistol Walk Forward Left/Right", "Pistol Strafe Diagonal"**
@@ -115,7 +119,9 @@ ignored and only one side of each pair is needed.
 ### Draw and holster
 **Mixamo: "Drawing A Pistol", "Holster Pistol"**
 
-Currently a 0.3 s crossfade with the gun mesh appearing in the hand.
+Still a 0.3 s crossfade with the gun mesh appearing in the hand. The folder
+`pistol/pistol draw/holster/` currently holds only `Pistol Aim.fbx`, so if a
+draw and a holster were meant to be in there they did not make it across.
 
 ### Optional, once the above is in
 - **Reload** — nothing tracks ammunition yet, so this needs a mag counter first.

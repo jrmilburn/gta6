@@ -117,6 +117,69 @@ export const CFG = {
       shakeTime: 0.35,
       shakeFreq: 22,
     },
+
+    /**
+     * The opening flight: a drone shot over the city, three hard cuts pushing
+     * in, then one smooth blend into the live player camera.
+     *
+     * Angles are degrees, distances and heights metres. Every shot is measured
+     * from the player, so this works wherever they spawn.
+     */
+    intro: {
+      /** `?intro=0` turns it off for a session; the smoke suite sets that. */
+      enabled: true,
+      /**
+       * Each shot drifts from the first element of every pair to the second
+       * over `dur` seconds, then CUTS to the next. `az` is degrees around the
+       * player measured from behind them, so shot 1 sits over their shoulder
+       * and each cut swings to a genuinely different side. `look` is how far
+       * above their feet the camera aims: keeping it high on the wide shots
+       * holds the horizon in frame instead of staring at the pavement.
+       */
+      shots: [
+        // All three are `topDown`: straight down at the ground from directly
+        // overhead, sliding rather than tilting. For those, `dist` and `az` are
+        // a horizontal offset from what the shot is centred on, `az` doubles as
+        // which compass bearing points up the screen -- a straight-down view has
+        // no other way to define roll -- and `look` is unused.
+        //
+        // The first is `world`: it frames the CITY, not the player. A player can
+        // spawn anywhere, and centring a seafront spawn put half the frame in
+        // open water. The other two are centred on the player, closing in.
+        { dur: 3.0, world: true, topDown: true, az: [42, 52], dist: [0, 70], h: [600, 540], look: [0, 0], fov: [45, 45] },
+        { dur: 2.4, topDown: true, az: [130, 141], dist: [0, 30], h: [240, 200], look: [0, 0], fov: [46, 46] },
+        { dur: 2.0, topDown: true, az: [-100, -91], dist: [0, 14], h: [90, 70], look: [0, 0], fov: [50, 50] },
+      ],
+      /**
+       * The last shot starts behind the player -- az 0, where the chase camera
+       * already is -- and blends to whatever the rig is showing, so the handover
+       * is a short move rather than a swing across the map.
+       */
+      handover: { dur: 1.8, dist: 26, h: 16, look: 1.2, fov: 58 },
+      /**
+       * Fog density multiplier at the top of the flight, eased back to 1 by the
+       * handover. FogExp2 at 0.0026 leaves about 91% haze at 600 m, which is a
+       * white screen rather than a city.
+       */
+      fogLift: 0.16,
+      /**
+       * A keypress skips to the handover blend rather than cutting dead, so
+       * skipping still arrives in the game rather than snapping. Input inside
+       * `skipGuard` seconds is ignored: the same keystroke that dismisses the
+       * title would otherwise skip the flight it just started.
+       */
+      skipGuard: 0.4,
+      /**
+       * Longest step the flight will take in one frame, seconds.
+       *
+       * The flight is timed in wall clock, which is right: a cut should land on
+       * the beat whatever the frame rate. But one long hitch -- a GC pause, an
+       * alt-tab, a texture upload -- could otherwise jump clean over the final
+       * blend and snap the camera into gameplay. Clamping means a bad frame
+       * stretches the flight slightly instead of skipping part of it.
+       */
+      maxStep: 0.25,
+    },
   },
 
   /**
@@ -235,13 +298,16 @@ export const CFG = {
       /**
        * Top speed while aiming, m/s.
        *
-       * Matched to the clips rather than picked for feel. `Pistol Walk
-       * Backward` was authored at 1.34 m/s and `Pistol Strafe` at 2.06; asking
-       * either to carry the player's 4 m/s walk pins the playback clamp and
-       * skates the feet by up to 46%. At 2 m/s both play near their own rate and
-       * plant properly -- and slowing down to aim is what a person does anyway.
+       * Matched to the clips rather than picked for feel, and re-measured when
+       * the run-speed pistol set arrived. Every armed direction now has a clip
+       * fast enough to carry 3.5 m/s inside the playback clamp: forward blends
+       * Pistol Run (2.89) into the ladder, the strafe pair tops out at 2.31 and
+       * Pistol Run Backward is 3.16. All three plant to 0% at this figure.
+       *
+       * It was 2 m/s when the only armed clips were a 1.34 m/s walk backward and
+       * a 2.06 m/s strafe, which pinned the clamp and skated by up to 46%.
        */
-      aimMoveSpeed: 2,
+      aimMoveSpeed: 3.5,
       /** Camera kick per shot, degrees of pitch, and how long it recovers over. */
       kickDeg: 0.6,
       kickRecover: 0.15,

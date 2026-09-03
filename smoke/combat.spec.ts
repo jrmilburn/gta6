@@ -25,7 +25,7 @@ async function shoot(page: Page, name: string): Promise<void> {
 }
 
 async function boot(page: Page): Promise<void> {
-  await page.goto(`/${QUERY}`);
+  await page.goto(`/${QUERY}&intro=0`);
   await page.waitForFunction(
     () => (window as unknown as { __game?: { ready: boolean } }).__game?.ready === true,
     null, { timeout: 60_000 },

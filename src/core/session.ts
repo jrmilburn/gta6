@@ -28,6 +28,7 @@ import { segmentVsAabb } from '../entities/collision';
 import { TrafficSystem } from '../entities/traffic';
 import { PedestrianSystem } from '../entities/pedestrians';
 import { CameraRig, cameraModeNames, type CameraModeName } from '../camera/cameras';
+import { IntroFlight } from '../camera/introCamera';
 import { createUi, type Ui } from '../ui/index';
 import type { ScreensApi } from '../ui/screens';
 import type { Assets } from './assets';
@@ -55,6 +56,8 @@ export interface Session {
   playerVehicle: Vehicle | null;
   driver: PlayerDriver;
   rig: CameraRig;
+  /** The opening drone flight. Inert once it has handed over to the rig. */
+  intro: IntroFlight;
   /** `G`: eight seconds of the dance clip, orbit camera and a crowd. */
   dance: DanceSystem;
   /** The player's skinned rig, or null when running on the procedural humanoid. */
@@ -226,6 +229,22 @@ export function createSession(game: Game, assets: Assets, screens?: ScreensApi):
   game.addRenderable(rig);
   game.add({ update: () => { if (game.input.justPressed('camera')) rig.cycle(); } });
 
+  // The opening flight, added AFTER the rig so it overwrites what the rig
+  // wrote. The rig keeps following the player underneath the whole cinematic,
+  // which is exactly what makes the final blend land on a live camera rather
+  // than a reconstructed one.
+  //
+  // It starts immediately: the session is only built once the assets are in, so
+  // "now" is the first moment there is a city to fly over. The splash goes with
+  // it, because the flight is the way into the game and there is nothing left to
+  // press a key for. With ?intro=0 the splash behaves exactly as it always did.
+  const intro = new IntroFlight(game, player);
+  if (CFG.feel.intro.enabled && param('intro') !== '0') {
+    game.addRenderable(intro);
+    screens?.hideTitle();
+    intro.start();
+  }
+
   // Heat first, so it is listening before anything can hit anyone.
   const wanted = new WantedSystem(game, {
     player,
@@ -342,6 +361,7 @@ export function createSession(game: Game, assets: Assets, screens?: ScreensApi):
 
   const session: Session = {
     city, vehicles, traffic, peds, player, driver, rig, dance, heroRig, combat, wanted, look,
+    intro,
     get playerVehicle() { return current; },
     // Assigned below: createUi needs the session it reads state from.
     ui: null as unknown as Ui,

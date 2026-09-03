@@ -209,6 +209,126 @@
       "rootYawDeg": 0
     },
     {
+      "name": "pistolAim",
+      "role": "once",
+      "angle": 0,
+      "armed": false,
+      "file": "anim-pistolAim.glb",
+      "bytes": 208668,
+      "source": "pistol/pistol draw/holster/Pistol Aim.fbx",
+      "duration": 7.09999990463257,
+      "channels": 53,
+      "groundSpeed": 0.01462985841856463,
+      "rootMotion": {
+        "x": 0.22047264128923416,
+        "y": 0.08149665594100952,
+        "z": 0.27581553161144257,
+        "travel": 0.10387199337659687
+      },
+      "inPlace": false,
+      "rootYawDeg": 33.68
+    },
+    {
+      "name": "pistolJump",
+      "role": "once",
+      "angle": 0,
+      "armed": false,
+      "file": "anim-pistolJump.glb",
+      "bytes": 48244,
+      "source": "pistol/Pistol Jump (1).fbx",
+      "duration": 0.800000011920929,
+      "channels": 53,
+      "groundSpeed": 3.296900163171438,
+      "rootMotion": {
+        "x": 0.08276418596506119,
+        "y": 0.4511979818344116,
+        "z": 2.637520169839263,
+        "travel": 2.637520169839263
+      },
+      "inPlace": false,
+      "rootYawDeg": 0
+    },
+    {
+      "name": "pistolBack-2",
+      "role": "dir",
+      "angle": 180,
+      "armed": true,
+      "file": "anim-pistolBack-2.glb",
+      "bytes": 41448,
+      "source": "pistol/pistol run/Pistol Run Backward.fbx",
+      "duration": 0.533333361148834,
+      "channels": 53,
+      "groundSpeed": 3.159481650893836,
+      "rootMotion": {
+        "x": 0.022366803255863488,
+        "y": 0.056109845638275146,
+        "z": 1.6850569683592767,
+        "travel": 1.6850569683592767
+      },
+      "inPlace": false,
+      "rootYawDeg": 0
+    },
+    {
+      "name": "pistolWalk",
+      "role": "dir",
+      "angle": 0,
+      "armed": true,
+      "file": "anim-pistolWalk.glb",
+      "bytes": 46544,
+      "source": "pistol/pistol run/Pistol Run.fbx",
+      "duration": 0.733333349227905,
+      "channels": 53,
+      "groundSpeed": 2.8891374865361246,
+      "rootMotion": {
+        "x": 0.014310609665699303,
+        "y": 0.07079476118087769,
+        "z": 2.1187008693814278,
+        "travel": 2.1187008693814278
+      },
+      "inPlace": false,
+      "rootYawDeg": 0
+    },
+    {
+      "name": "pistolStrafe-2",
+      "role": "dir",
+      "angle": -90,
+      "armed": true,
+      "file": "anim-pistolStrafe-2.glb",
+      "bytes": 43148,
+      "source": "pistol/pistol run/Pistol Strafe.fbx",
+      "duration": 0.600000023841858,
+      "channels": 53,
+      "groundSpeed": 2.314627456549457,
+      "rootMotion": {
+        "x": 1.3887765291146934,
+        "y": 0.09594422578811646,
+        "z": 0.031727700028568506,
+        "travel": 1.3887765291146934
+      },
+      "inPlace": false,
+      "rootYawDeg": 0
+    },
+    {
+      "name": "pistolBack-3",
+      "role": "dir",
+      "angle": 180,
+      "armed": true,
+      "file": "anim-pistolBack-3.glb",
+      "bytes": 54188,
+      "source": "pistol/pistol walk/Pistol Walk Backward.fbx",
+      "duration": 1.03333330154419,
+      "channels": 53,
+      "groundSpeed": 1.3446302593866353,
+      "rootMotion": {
+        "x": 0.09291592927183956,
+        "y": 0.08509957790374756,
+        "z": 1.3894512252882123,
+        "travel": 1.3894512252882123
+      },
+      "inPlace": false,
+      "rootYawDeg": 0
+    },
+    {
       "name": "punch",
       "role": "many",
       "angle": 0,

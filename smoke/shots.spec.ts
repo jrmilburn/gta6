@@ -50,7 +50,7 @@ async function live(page: Page, name: string): Promise<void> {
 
 async function ready(page: Page, query: string): Promise<void> {
   const q = query ? `${query}&nohud=1` : '?nohud=1';
-  await page.goto(`/${q}`);
+  await page.goto(`/${q}${q ? '&' : '?'}intro=0`);
   await page.waitForFunction(
     () => (window as unknown as { __game?: { ready: boolean } }).__game?.ready === true,
     null,

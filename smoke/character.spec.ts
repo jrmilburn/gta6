@@ -29,7 +29,7 @@ async function shoot(page: Page, name: string): Promise<void> {
 }
 
 async function boot(page: Page, query = ''): Promise<void> {
-  await page.goto(`/${query}`);
+  await page.goto(`/${query}${query ? '&' : '?'}intro=0`);
   await page.waitForFunction(
     () => (window as unknown as { __game?: { ready: boolean } }).__game?.ready === true,
     null, { timeout: 60_000 },

@@ -50,7 +50,7 @@ async function frame(page: Page, azimuth: number, dist: number, height: number):
 }
 
 test('acceptance stills', async ({ page }) => {
-  await page.goto('/?peds=18&traffic=6');
+  await page.goto('/?peds=18&traffic=6&intro=0');
   await page.waitForFunction(
     () => (window as unknown as { __game?: { ready: boolean } }).__game?.ready === true,
     null, { timeout: 90_000 },
