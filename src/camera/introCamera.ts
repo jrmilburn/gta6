@@ -50,14 +50,6 @@ interface Pose {
   fov: number;
 }
 
-const lerpPose = (a: Pose, b: Pose, t: number): Pose => ({
-  az: THREE.MathUtils.lerp(a.az, b.az, t),
-  dist: THREE.MathUtils.lerp(a.dist, b.dist, t),
-  h: THREE.MathUtils.lerp(a.h, b.h, t),
-  look: THREE.MathUtils.lerp(a.look, b.look, t),
-  fov: THREE.MathUtils.lerp(a.fov, b.fov, t),
-});
-
 export class IntroFlight implements Renderable {
   /** True from the first frame of the flight until the blend completes. */
   active = false;
@@ -71,8 +63,7 @@ export class IntroFlight implements Renderable {
     world: 'world' in s && s.world === true,
     /** True to sit directly overhead pointing straight down. */
     topDown: 'topDown' in s && s.topDown === true,
-    from: { az: s.az[0], dist: s.dist[0], h: s.h[0], look: s.look[0], fov: s.fov[0] } as Pose,
-    to: { az: s.az[1], dist: s.dist[1], h: s.h[1], look: s.look[1], fov: s.fov[1] } as Pose,
+    pose: { az: s.az, dist: s.dist, h: s.h, look: s.look, fov: s.fov } as Pose,
   }));
   private readonly flightTime = I.shots.reduce((a, s) => a + s.dur, 0);
   private readonly total = this.flightTime + I.handover.dur;
@@ -226,7 +217,7 @@ export class IntroFlight implements Renderable {
       return;
     }
 
-    // --- shots 1..3: drift within the shot, hard cut between them ------------
+    // --- shots 1..3: each pose held still, hard cut between them -------------
     let t = this.t;
     let shot = this.shots[0];
     for (const s of this.shots) {
@@ -234,7 +225,7 @@ export class IntroFlight implements Renderable {
       t -= s.dur;
       shot = s;
     }
-    const p = lerpPose(shot.from, shot.to, ease(t / shot.dur));
+    const p = shot.pose;
     this.place(p, shot.world, shot.topDown, this.eye, this.quat);
     cam.position.copy(this.eye);
     cam.quaternion.copy(this.quat);

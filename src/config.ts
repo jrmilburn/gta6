@@ -129,26 +129,24 @@ export const CFG = {
       /** `?intro=0` turns it off for a session; the smoke suite sets that. */
       enabled: true,
       /**
-       * Each shot drifts from the first element of every pair to the second
-       * over `dur` seconds, then CUTS to the next. `az` is degrees around the
-       * player measured from behind them, so shot 1 sits over their shoulder
-       * and each cut swings to a genuinely different side. `look` is how far
-       * above their feet the camera aims: keeping it high on the wide shots
-       * holds the horizon in frame instead of staring at the pavement.
+       * One held pose per shot, cut hard to the next. Nothing moves within a
+       * shot: the zoom is the cut. Held just long enough to read the frame and
+       * no longer -- the whole point is the snap between them.
+       *
+       * All three are `topDown`: straight down at the ground from directly
+       * overhead. For those, `dist` and `az` are a horizontal offset from what
+       * the shot is centred on, `az` doubles as which compass bearing points up
+       * the screen -- a straight-down view has no other way to define roll --
+       * and `look` is unused.
+       *
+       * The first is `world`: it frames the CITY, not the player. A player can
+       * spawn anywhere, and centring a seafront spawn put half the frame in open
+       * water. The other two are centred on the player, closing in.
        */
       shots: [
-        // All three are `topDown`: straight down at the ground from directly
-        // overhead, sliding rather than tilting. For those, `dist` and `az` are
-        // a horizontal offset from what the shot is centred on, `az` doubles as
-        // which compass bearing points up the screen -- a straight-down view has
-        // no other way to define roll -- and `look` is unused.
-        //
-        // The first is `world`: it frames the CITY, not the player. A player can
-        // spawn anywhere, and centring a seafront spawn put half the frame in
-        // open water. The other two are centred on the player, closing in.
-        { dur: 3.0, world: true, topDown: true, az: [42, 52], dist: [0, 70], h: [600, 540], look: [0, 0], fov: [45, 45] },
-        { dur: 2.4, topDown: true, az: [130, 141], dist: [0, 30], h: [240, 200], look: [0, 0], fov: [46, 46] },
-        { dur: 2.0, topDown: true, az: [-100, -91], dist: [0, 14], h: [90, 70], look: [0, 0], fov: [50, 50] },
+        { dur: 1.1, world: true, topDown: true, az: 46, dist: 0, h: 600, look: 0, fov: 45 },
+        { dur: 0.9, topDown: true, az: 135, dist: 0, h: 240, look: 0, fov: 46 },
+        { dur: 0.8, topDown: true, az: -96, dist: 0, h: 90, look: 0, fov: 50 },
       ],
       /**
        * The last shot starts behind the player -- az 0, where the chase camera
