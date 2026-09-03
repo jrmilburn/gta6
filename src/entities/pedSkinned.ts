@@ -11,7 +11,7 @@ import type { Vec2 } from '../types';
 import { CFG } from '../config';
 import type { CharacterSource } from '../core/character';
 import { CharacterRig } from './characterRig';
-import { tumbleQuat, type PosablePed } from './pedPose';
+import { tumbleQuat, bodyQuat, type PosablePed } from './pedPose';
 import type { PedRenderer } from './pedRenderer';
 import {
   bakeStaticPose, buildPalettes, buildPaletteMaterials,
@@ -311,7 +311,9 @@ export class SkinnedPedRenderer implements PedRenderer {
   /** Returns true while this pedestrian is dancing along with the player. */
   private stepDance(slot: Slot, p: PosablePed): boolean {
     const centre = this.danceCentre;
-    const near = centre !== null && p.mode !== 'tumble'
+    // Nobody dances off the floor: a knocked-down or tumbling pedestrian keeps
+    // its own animation until it has stood back up.
+    const near = centre !== null && p.mode !== 'tumble' && p.mode !== 'down'
       && Math.hypot(p.pos.x - centre.x, p.pos.z - centre.z) <= this.danceRadius;
     if (!near) {
       if (slot.dancing) { slot.rig.stopDance(); slot.dancing = false; }
@@ -330,7 +332,10 @@ export class SkinnedPedRenderer implements PedRenderer {
     const i = this.counts[v];
     if (i >= this.capacity) return;
     this.counts[v] = i + 1;
-    if (!tumbleQuat(p, Q)) Q.setFromAxisAngle(UP, p.heading);
+    // This is where a body ends up the moment it drops out of the slot pool:
+    // walk a little way from someone you knocked over and they used to stand
+    // straight back up, then lie down again when you walked back.
+    if (!bodyQuat(p, Q)) Q.setFromAxisAngle(UP, p.heading);
     M.compose(V.set(p.pos.x, p.y, p.pos.z), Q, S.setScalar(p.scale));
     for (const mesh of this.statics[v]) mesh.setMatrixAt(i, M);
   }

@@ -4,7 +4,16 @@
 // the only part of that file that knows about quaternions and limb angles, and
 // keeping it here leaves the wander/cross/flee state machine readable.
 import * as THREE from 'three';
+import { CFG } from '../config';
 import type { PedMeshPool } from './pedMesh';
+
+const K = CFG.combat.knockdown;
+/**
+ * How long the get-up takes when there is no clip to measure. Matches the
+ * fallback stepDown() uses for exactly the same reason: the instanced pool has
+ * no animation to ask.
+ */
+const GETUP_SECONDS = 2 / K.getUpRate;
 
 /** Tumble timings, shared with the pedestrian state machine. */
 export const TUMBLE_TOSS = 0.9;   // rise + spin + land, combined into one arc
@@ -34,6 +43,8 @@ export interface PosablePed {
   fallClip: string | null;
   /** Negative once they are getting back up, which plays the fall backwards. */
   fallRate: number;
+  /** Seconds since the knockdown began, which is what times the get-up. */
+  downT: number;
   tumbleT: number;
   tumbleAxis: THREE.Vector3;
 }
@@ -61,6 +72,47 @@ export function tumbleQuat(p: PosablePed, out: THREE.Quaternion): boolean {
 }
 
 /**
+ * The body rotation for a knocked-down pedestrian: flat on the ground, then
+ * arcing back upright as they get up. Returns false when `p` is not down.
+ *
+ * The skinned crowd plays a real fall clip for this and never calls it. The
+ * instanced pool has no animation at all, so it gets the same 90 degree lie the
+ * tumble uses -- which is the whole point: without it a body drawn by the
+ * instanced pool stands bolt upright through the entire knockdown, and pops
+ * between lying and standing as the skinned slot pool churns around the player.
+ */
+export function downQuat(p: PosablePed, out: THREE.Quaternion): boolean {
+  if (p.mode !== 'down') return false;
+  // fallRate goes negative the moment the get-up starts; before that they are
+  // simply lying there, however long that is.
+  const rising = p.fallRate < 0
+    ? Math.min(1, Math.max(0, (p.downT - K.downSeconds) / GETUP_SECONDS))
+    : 0;
+  out.setFromAxisAngle(AXIS_X, (Math.PI / 2) * (1 - rising));
+  return true;
+}
+
+/**
+ * The body rotation for a pedestrian who is not on their feet -- mid-tumble or
+ * knocked down. Returns false when they are upright, in which case `out` is
+ * left alone and the caller should use the ordinary facing.
+ *
+ * Every path that draws a pedestrian WITHOUT animation goes through this, and
+ * there are two: the far-LOD static instances in pedSkinned.ts and the fully
+ * procedural pool in pedRenderer.ts. Having one helper is the point. The bug
+ * this replaces was each of them growing its own idea of which modes are
+ * horizontal, and both forgetting the knockdown -- so a body drawn by either
+ * stood bolt upright, and popped between lying and standing as the skinned slot
+ * pool churned around the player.
+ *
+ * The near-skinned path deliberately does NOT use this: it has a real fall clip
+ * and poses itself.
+ */
+export function bodyQuat(p: PosablePed, out: THREE.Quaternion): boolean {
+  return tumbleQuat(p, out) || downQuat(p, out);
+}
+
+/**
  * Advance `p`'s gait phase and write its pose into the pool.
  *
  * Walking and fleeing are the same curve at different amplitude and frequency;
@@ -72,7 +124,7 @@ export function posePed(pool: PedMeshPool, p: PosablePed, dt: number): void {
   let legSwing = 0, armSwing = 0, armsUp = false;
   let quat = Q_YAW;
 
-  if (tumbleQuat(p, Q_TUMBLE)) {
+  if (bodyQuat(p, Q_TUMBLE)) {
     quat = Q_TUMBLE;
   } else {
     Q_YAW.setFromAxisAngle(AXIS_Y, p.heading);
