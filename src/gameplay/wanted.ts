@@ -33,7 +33,16 @@ export class WantedSystem implements System {
   /** Where the last shot was heard, for police to drive to. Null once answered. */
   investigate: Vec2 | null = null;
 
+  /**
+   * True while a police unit has eyes on the player. Heat does not bleed off
+   * while they do: a chase you are losing should not time itself out.
+   */
+  contact = false;
+
   private stars = 0;
+
+  /** Stars, 0..maxStars. What the HUD draws and what police.ts sizes itself to. */
+  get level(): number { return this.stars; }
 
   constructor(private readonly host: WantedHost, private readonly deps: WantedDeps) {
     host.events.on('punchHit', (p) => {
@@ -75,9 +84,8 @@ export class WantedSystem implements System {
   }
 
   update(dt: number): void {
-    if (this.heat <= 0) return;
-    // Bleeds off on its own, which is the only way down for now: nothing in the
-    // game arrests anybody yet.
+    if (this.heat <= 0 || this.contact) return;
+    // Bleeds off once nobody can see you. Being busted is the other way down.
     this.heat = Math.max(0, this.heat - H.decayPerSecond * dt);
     this.sync();
   }

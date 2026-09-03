@@ -61,11 +61,16 @@ figure every armed direction can still carry inside the playback clamp.
 bottom rung at 0 m/s, so a drift of 0.1 m/s resolves to almost pure idle with no
 threshold to step across. The synthesised stand-in is gone.
 
-**Turn in place** — `Turning.fbx`, 3.67 s, 0.12 m of travel and its root yaw
-deliberately preserved. The converter now recognises it as its own `turn` role
-and loads it. **Nothing drives it yet** — the controller still rotates by
-sliding the feet at up to 720°/s, and wiring a turn-in-place state is engine
-work, not an asset.
+**Turn in place** — the converter recognises `Turning.fbx` as its own `turn`
+role and loads it, but **it is the wrong clip and nothing can drive it**.
+Measured: 3.67 s for **−36.7°** of rotation, about 10°/s. The character turns at
+720°/s. Driving the yaw from the clip would make turning 72× slower, and playing
+it fast enough to keep up is a blur.
+
+What is needed is a real quarter- and half-turn: **Mixamo "Turn 90 Left" /
+"Turn 180"**, which are roughly 0.8 s for 90° (~110°/s). With one of those the
+turn-in-place state is worth building, and the character's stationary turn rate
+can come down to meet it. Until then it still rotates by sliding its feet.
 
 ---
 

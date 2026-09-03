@@ -11,7 +11,29 @@ export const CFG = {
   player: { walkSpeed: 4, runSpeed: 8, enterRadius: 3.5, health: 100 },
   traffic: { count: 40, cruiseSpeed: 14, followGap: 8, intersectionPause: 1.2 },
   peds: { count: 80, walkSpeed: 1.4, fleeSpeed: 5, fleeRadius: 10 },
-  police: { maxStars: 5, decaySeconds: 15, bustSeconds: 3, spawnPerStar: [0, 1, 2, 3, 4, 5] },
+  police: {
+    maxStars: 5,
+    decaySeconds: 15,
+    bustSeconds: 3,
+    /** Units on the street at each star level; index is the star count. */
+    spawnPerStar: [0, 1, 2, 3, 4, 5],
+    /** How far away a new unit is dropped, and how far one may stray. */
+    spawnDist: 110,
+    recycleDist: 300,
+    /** Pursuit. `cruise` is what they drive at, `closeIn` where they ease off. */
+    cruise: 30,
+    closeIn: 10,
+    /** A unit stopped this long with the throttle down is stuck on something. */
+    unstickAfter: 1.4,
+    unstickFor: 0.9,
+    /**
+     * A bust needs the player on foot, this close to a cruiser, with both of
+     * them slow, held for `bustSeconds`. Outrunning it or getting back in a car
+     * breaks it off -- there is no arrest animation and nobody is hurt.
+     */
+    bustRadius: 5,
+    bustSpeed: 3.5,
+  },
   camera: { chaseDist: 8, chaseHeight: 3.2, fovBase: 60, fovAtMaxSpeed: 78, lag: 6 },
   colors: { skyTop: 0x5b3fa0, skyHorizon: 0xffa66b, fog: 0xf5b592, sun: 0xffd9a0, water: 0x2ec4b6 },
 

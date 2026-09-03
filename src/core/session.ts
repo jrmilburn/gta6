@@ -4,6 +4,7 @@
 // Systems run in the plan's order: player input -> vehicles -> cameras. Later
 // phases splice traffic, pedestrians, police, missions and HUD into the gaps.
 import type { Game } from './game';
+import type { Vec2 } from '../types';
 import { Rng, SEED, param, paramNum } from './rng';
 import { generateCity, type CityLayout } from '../world/cityGen';
 import { buildGround } from '../world/ground';
@@ -28,6 +29,7 @@ import { segmentVsAabb } from '../entities/collision';
 import { TrafficSystem } from '../entities/traffic';
 import { PedestrianSystem } from '../entities/pedestrians';
 import { CameraRig, cameraModeNames, type CameraModeName } from '../camera/cameras';
+import { PoliceSystem } from '../entities/police';
 import { IntroFlight } from '../camera/introCamera';
 import { createUi, type Ui } from '../ui/index';
 import type { ScreensApi } from '../ui/screens';
@@ -58,6 +60,8 @@ export interface Session {
   rig: CameraRig;
   /** The opening drone flight. Inert once it has handed over to the rig. */
   intro: IntroFlight;
+  /** Police response, sized by the wanted level. */
+  police: PoliceSystem;
   /** `G`: eight seconds of the dance clip, orbit camera and a crowd. */
   dance: DanceSystem;
   /** The player's skinned rig, or null when running on the procedural humanoid. */
@@ -146,6 +150,15 @@ export function createSession(game: Game, assets: Assets, screens?: ScreensApi):
 
   // The vehicle currently occupied by the player, or null while on foot.
   let current: Vehicle | null = null;
+
+  /**
+   * Where the player effectively is. The on-foot controller stops updating the
+   * moment they get into a car -- `player.update` returns early when `onFoot` is
+   * false -- so `player.pos` reads back wherever they climbed in. Anything that
+   * spawns, recycles or chases relative to the player has to ask this instead,
+   * or it works off a ghost as soon as anybody drives anywhere.
+   */
+  const focusPos = (): Vec2 => (current ? current.pos : player.pos);
   const driver = new PlayerDriver(game, vehicles[0]);
 
   // Traffic (plan section 6): AI cars on the lane graph, spawned at least
@@ -153,19 +166,31 @@ export function createSession(game: Game, assets: Assets, screens?: ScreensApi):
   // the same peer-collision list as the garage cars below -- the player can
   // crash into and steal them (session.ts is what makes "stealing" work: once
   // E sets `occupied = true` on one, TrafficSystem's update() skips it).
-  const traffic = new TrafficSystem(game, city, () => player.pos, () => current);
+  const traffic = new TrafficSystem(game, city, focusPos, () => current);
 
-  // Every drivable body in the world (garage cars, the spare, and traffic)
-  // collides with every other one, and is something the player can hit, be
-  // hit by, or step into.
-  const allVehicles: Vehicle[] = [...vehicles, ...traffic.cars];
+  // Police (section 9). Built before `allVehicles` so its cruisers join the
+  // same peer-collision list as everything else: they are ordinary vehicles,
+  // and the player can ram them, wreck them and steal them. `wanted` is
+  // resolved lazily because the two systems each need the other.
+  const police: PoliceSystem = new PoliceSystem(game, city, {
+    player,
+    focus: focusPos,
+    playerVehicle: () => current,
+    wanted: () => wanted,
+    clearLine: (a, b) => !city.colliders.some((c) => segmentVsAabb(a.x, a.z, b.x, b.z, c) >= 0),
+  });
+
+  // Every drivable body in the world (garage cars, the spare, traffic and the
+  // police) collides with every other one, and is something the player can hit,
+  // be hit by, or step into.
+  const allVehicles: Vehicle[] = [...vehicles, ...traffic.cars, ...police.cars];
   for (const v of allVehicles) v.setPeers(allVehicles);
   player.setVehicles(allVehicles);
 
   // Pedestrians (plan section 6): sidewalk wanderers that flee and tumble
   // when hit by any of the same vehicles.
   const peds = new PedestrianSystem(
-    game, () => player.pos, 424242,
+    game, focusPos, 424242,
     assets.character
       ? new SkinnedPedRenderer(assets.character, CFG.peds.count, {
         cameraPosition: game.camera.position,
@@ -218,6 +243,7 @@ export function createSession(game: Game, assets: Assets, screens?: ScreensApi):
   // System order (plan section 1.1): input -> player -> vehicles -> traffic
   // -> pedestrians -> ... -> cameras.
   for (const v of traffic.cars) game.add(v);
+  for (const v of police.cars) game.add(v);
   game.add(traffic);
   game.add(peds);
 
@@ -246,15 +272,16 @@ export function createSession(game: Game, assets: Assets, screens?: ScreensApi):
   }
 
   // Heat first, so it is listening before anything can hit anyone.
-  const wanted = new WantedSystem(game, {
+  const wanted: WantedSystem = new WantedSystem(game, {
     player,
-    police: () => allVehicles.filter((v) => v.kind === 'police'),
-    // Line of sight through the same footprints the camera checks. There are no
-    // police vehicles in the world yet -- police.ts is still a stub -- so this
-    // is wired and inert rather than wired and wrong.
+    police: () => police.cars,
+    // Line of sight through the same footprints the camera checks.
     clearLine: (a, b) => !city.colliders.some((c) => segmentVsAabb(a.x, a.z, b.x, b.z, c) >= 0),
   });
   game.add(wanted);
+  // After `wanted`, so a bust clears the heat that the same frame's decay would
+  // otherwise put straight back.
+  game.add(police);
 
   const combat = new CombatSystem(game, {
     player,
@@ -350,6 +377,8 @@ export function createSession(game: Game, assets: Assets, screens?: ScreensApi):
         current.occupied = false;
         current = null;
       }
+      police.standDown();
+      wanted.clear();
       player.respawn();
       player.fade = 0;
       doorFade = 0;
@@ -361,7 +390,7 @@ export function createSession(game: Game, assets: Assets, screens?: ScreensApi):
 
   const session: Session = {
     city, vehicles, traffic, peds, player, driver, rig, dance, heroRig, combat, wanted, look,
-    intro,
+    intro, police,
     get playerVehicle() { return current; },
     // Assigned below: createUi needs the session it reads state from.
     ui: null as unknown as Ui,

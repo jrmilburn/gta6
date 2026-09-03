@@ -12,6 +12,12 @@ import { PED_SCALES } from './pedMesh';
 import { ProceduralPedRenderer, type PedRenderer } from './pedRenderer';
 
 const HIT_SPEED_MIN = 1.5;
+// Driving over somebody already on the ground. A jolt through the suspension
+// and a nudge off line -- not a second knockdown, and not a kill: they are
+// already down, and they get up again exactly as they would have.
+const BUMP_SHOVE = 1.6;
+const BUMP_IMPACT = 5;
+const BUMP_COOLDOWN = 0.8;
 /** Pedestrian body radius for the building push-out, and the hash query range. */
 const PED_RADIUS = 0.35;
 const PUSH_QUERY = 8;
@@ -52,6 +58,8 @@ export interface PedVehicleLike {
   wrecked: boolean;
   forwardX: number;
   forwardZ: number;
+  /** Optional, so the pedestrian tests can pass a plain object. */
+  shove?(x: number, z: number): void;
 }
 
 export interface PedHost {
@@ -99,6 +107,8 @@ interface Ped {
   // no death -- they lie still, then get up, or are recycled if the player has
   // long since walked away.
   downT: number;
+  /** Seconds before this body can bump a car again. */
+  bumpCooldown: number;
   fallClip: string | null;
   fallRate: number;
   // tumble: tossed by a hit, see stepTumble().
@@ -181,7 +191,7 @@ export class PedestrianSystem implements System {
     const p: Ped = {
       variant: this.mesh.variantFor(i), slot: this.mesh.slotFor(i),
       scale: PED_SCALES[this.rng.int(0, PED_SCALES.length - 1)],
-      pos: { x: 0, z: 0 }, y: 0, heading: 0, mode: 'wander', speed: 0,
+      pos: { x: 0, z: 0 }, y: 0, heading: 0, mode: 'wander', speed: 0, bumpCooldown: 0,
       phase: this.rng.range(0, 10),
       ix, iz, corner: this.rng.int(0, 3), dir: this.rng.chance(0.5) ? 1 : -1, edgeT: this.rng.next(),
       crossFrom: { x: 0, z: 0 }, crossTo: { x: 0, z: 0 }, crossT: 0, crossDur: 1,
@@ -211,7 +221,10 @@ export class PedestrianSystem implements System {
       if (Math.hypot(p.pos.x - player.x, p.pos.z - player.z) > RECYCLE_DIST) this.recycle(p);
 
       if (p.mode === 'return') this.stepReturn(p, dt);
-      else if (p.mode === 'down') stepDown(p, dt, this.playerPos(), () => this.recycle(p), () => this.resumeWander(p), this.mesh);
+      else if (p.mode === 'down') {
+        stepDown(p, dt, this.playerPos(), () => this.recycle(p), () => this.resumeWander(p), this.mesh);
+        this.bumpDowned(p, dt);
+      }
       else if (p.mode === 'tumble') this.stepTumble(p, dt);
       else if (p.mode === 'flee') this.stepFlee(p, dt);
       else if (p.mode === 'cross') this.stepCross(p, dt);
@@ -442,6 +455,25 @@ export class PedestrianSystem implements System {
       return true;
     }
     return false;
+  }
+
+  /**
+   * A car driving over somebody already on the ground. The body stays put and
+   * the car takes a small jolt: a person is not a kerb, and pretending they are
+   * solid would launch the car. Nobody is hurt -- they are already down, and
+   * they get back up on the same timer as before.
+   */
+  private bumpDowned(p: Ped, dt: number): void {
+    p.bumpCooldown = Math.max(0, p.bumpCooldown - dt);
+    if (p.bumpCooldown > 0) return;
+    for (const v of this.vehicles) {
+      if (v.wrecked || Math.abs(v.speed) < HIT_SPEED_MIN) continue;
+      if (!obbContainsPoint(v, p.pos.x, p.pos.z)) continue;
+      v.shove?.(-v.forwardX * BUMP_SHOVE, -v.forwardZ * BUMP_SHOVE);
+      p.bumpCooldown = BUMP_COOLDOWN;
+      this.host.events.emit('vehicleHit', { x: p.pos.x, z: p.pos.z, impact: BUMP_IMPACT });
+      return;
+    }
   }
 
   private startTumble(p: Ped, v: PedVehicleLike): void {
