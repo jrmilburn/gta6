@@ -20,6 +20,10 @@ async function boot(page: Page): Promise<void> {
 }
 
 test('the crowd stays out of the walls, off the palms, and never teleports', async ({ page }) => {
+  // Thirty simulated seconds. The loop caps how many steps a frame may take, so
+  // on a machine that falls back to software rendering that is minutes of wall
+  // clock -- well past the 7-minute default. Same reasoning as traffic.spec.
+  test.setTimeout(1_200_000);
   await boot(page);
 
   const r = await page.evaluate(async () => {
@@ -31,6 +35,7 @@ test('the crowd stays out of the walls, off the palms, and never teleports', asy
           props: { palms: Array<{ pos: { x: number; z: number } }> };
         };
         peds: { list(): Array<{ x: number; z: number; mode: string }> };
+        player: { pos: { x: number; z: number } };
       };
     };
     const wait = async (secs: number): Promise<void> => {
@@ -43,19 +48,31 @@ test('the crowd stays out of the walls, off the palms, and never teleports', asy
 
     await wait(2);
     let worstInside = 0;
-    let maxJump = 0;
-    let prev = w.__session.peds.list().map((q) => ({ x: q.x, z: q.z }));
+    let visibleJump = 0;
+    let recycles = 0;
+    const snap = (): Array<{ x: number; z: number; far: number }> => {
+      const p = w.__session.player.pos;
+      return w.__session.peds.list().map((q) => ({
+        x: q.x, z: q.z, far: Math.hypot(q.x - p.x, q.z - p.z),
+      }));
+    };
+    let prev = snap();
     for (let i = 0; i < 60; i++) {
       await wait(0.5);
-      const now = w.__session.peds.list();
-      worstInside = Math.max(worstInside, now.filter((q) => inside(q.x, q.z)).length);
+      const now = snap();
+      worstInside = Math.max(
+        worstInside, w.__session.peds.list().filter((q) => inside(q.x, q.z)).length,
+      );
       for (let k = 0; k < now.length; k++) {
         const d = Math.hypot(now[k].x - prev[k].x, now[k].z - prev[k].z);
-        // A recycle moves somebody on purpose, and only ever from beyond 250 m
-        // where nobody can see it. Anything short of that is a pop.
-        if (d < 100) maxJump = Math.max(maxJump, d);
+        if (d <= 4) continue;
+        // Recycling moves somebody on purpose, and only ever once they have
+        // wandered past 250 m -- far outside anything the player can see. Every
+        // other jump is one the player would have watched happen.
+        if (prev[k].far >= 249) recycles++;
+        else visibleJump = Math.max(visibleJump, d);
       }
-      prev = now.map((q) => ({ x: q.x, z: q.z }));
+      prev = now;
     }
 
     let closestPalm = Infinity;
@@ -64,19 +81,24 @@ test('the crowd stays out of the walls, off the palms, and never teleports', asy
         closestPalm = Math.min(closestPalm, Math.hypot(palm.pos.x - q.x, palm.pos.z - q.z));
       }
     }
-    return { worstInside, maxJump, closestPalm, palms: w.__session.city.props.palms.length };
+    return {
+      worstInside, visibleJump, recycles, closestPalm,
+      palms: w.__session.city.props.palms.length,
+    };
   });
 
   console.log(`over 30 simulated seconds: ${r.worstInside} pedestrians inside a building, `
-    + `largest step ${r.maxJump.toFixed(2)} m, nearest of ${r.palms} palms to anyone `
-    + `${r.closestPalm.toFixed(2)} m`);
+    + `largest visible jump ${r.visibleJump.toFixed(2)} m (${r.recycles} off-screen recycles `
+    + `ignored), nearest of ${r.palms} palms to anyone ${r.closestPalm.toFixed(2)} m`);
 
   // Fleeing used to be a straight line for three seconds with no collision test.
   expect(r.worstInside, 'pedestrians should not walk through buildings').toBe(0);
-  // Half a second of a 5 m/s sprint is 2.5 m; anything past 4 m is a teleport.
-  // Snapping to the nearest corner moved them half a block, and snapping to the
-  // nearest point on the perimeter still moved them 18 m.
-  expect(r.maxJump, 'pedestrians should not teleport').toBeLessThan(4);
+  // Half a second of a 5 m/s sprint is 2.5 m, so nothing the player can see
+  // should move further than that between samples. Snapping to the nearest
+  // corner moved them half a block; snapping to the nearest point on the
+  // perimeter still moved them 18 m; recycling could drop one twenty metres in
+  // front of the player.
+  expect(r.visibleJump, 'pedestrians should not teleport in view').toBe(0);
   // Palms and the walking line used to sit on the same 1.5 m inset.
   expect(r.closestPalm, 'palms should not stand on the pavement').toBeGreaterThan(0.9);
 });

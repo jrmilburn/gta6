@@ -50,6 +50,9 @@ const CLIP_NAMES = [
   [/forward.*diagonal|diagonal.*forward/i, 'jogFwdDiag', 'dir', 45],
   [/back ?ward|jog ?back/i, 'jogBack', 'dir', 180],
   [/strafe|side ?step/i, 'jogStrafe', 'dir', 90],
+  // Turn in place. Matched after the directional rules so "Turn Left While
+  // Walking" is still a walk, and before the gait rules so it is not a run.
+  [/turn|pivot/i, 'turn', 'turn'],
 
   [/strut|walk/i, 'walk', 'ladder'],
   [/jog/i, 'jog', 'ladder'],
@@ -238,12 +241,21 @@ function buildHero(fbx) {
 function buildClip(fbx, seen) {
   const { role, angle, armed } = roleFor(fbx);
   let { name } = roleFor(fbx);
-  if (role === 'many') {
-    // punch, punch-2, punch-3... The runtime picks from the set by role, so the
-    // numbering only has to be stable, not meaningful.
-    const n = (seen.get(name) ?? 0) + 1;
-    seen.set(name, n);
-    if (n > 1) name = name + '-' + n;
+  // punch, punch-2, punch-3... For 'many' the runtime picks from the whole set
+  // by role, so the numbering only has to be stable, not meaningful. Every other
+  // role is numbered too, because the name is also the output file name: two
+  // clips resolving to 'run' used to write anim-run.glb twice and silently lose
+  // one of them. Ladder and direction clips are collected by role, so a second
+  // one is simply another rung or anchor; a duplicate 'once' is dead weight, and
+  // says so.
+  const n = (seen.get(name) ?? 0) + 1;
+  seen.set(name, n);
+  if (n > 1) {
+    name = name + '-' + n;
+    if (role === 'once') {
+      console.log('  note: ' + path.basename(fbx) + ' duplicates a "' + role
+        + '" clip and will be loaded but unused.');
+    }
   }
   console.log('clip ' + name + ' [' + role + ']: ' + path.basename(fbx));
   const glb = convert(fbx, path.join(TMP, name));

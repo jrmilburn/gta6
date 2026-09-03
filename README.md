@@ -21,6 +21,10 @@ character.
 Drop source files in `public/assets/raw/` and run the converters. The folder is
 gitignored and excluded from the build; only the converted output ships.
 
+For animation specifically, [ANIMATIONS.md](ANIMATIONS.md) lists what the clip
+set is still missing, ranked by how visible the gap is, with the naming the
+converter expects.
+
 ```
 public/assets/raw/
   main-character.fbx        # a Mixamo export "with skin"

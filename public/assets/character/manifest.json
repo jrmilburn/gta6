@@ -9,6 +9,26 @@
   },
   "clips": [
     {
+      "name": "idle",
+      "role": "ladder",
+      "angle": 0,
+      "armed": false,
+      "file": "anim-idle.glb",
+      "bytes": 280756,
+      "source": "Breathing Idle.fbx",
+      "duration": 9.93333339691162,
+      "channels": 53,
+      "groundSpeed": 2.8373205360589164e-9,
+      "rootMotion": {
+        "x": 0.1773776262998581,
+        "y": 0.02077704668045044,
+        "z": 0.036033318378031254,
+        "travel": 2.818405083857721e-8
+      },
+      "inPlace": true,
+      "rootYawDeg": 0
+    },
+    {
       "name": "fall",
       "role": "many",
       "angle": 0,
@@ -164,6 +184,26 @@
         "y": 0.5999671816825867,
         "z": 2.293789411429316,
         "travel": 2.293789411429316
+      },
+      "inPlace": false,
+      "rootYawDeg": 0
+    },
+    {
+      "name": "run-2",
+      "role": "ladder",
+      "angle": 0,
+      "armed": false,
+      "file": "anim-run-2.glb",
+      "bytes": 41440,
+      "source": "new fast ru n/Fast Run.fbx",
+      "duration": 0.533333361148834,
+      "channels": 53,
+      "groundSpeed": 5.166454580662349,
+      "rootMotion": {
+        "x": 0.03594508580863476,
+        "y": 0.03559821844100952,
+        "z": 2.7554425867274404,
+        "travel": 2.7554425867274404
       },
       "inPlace": false,
       "rootYawDeg": 0
@@ -427,6 +467,26 @@
       },
       "inPlace": true,
       "rootYawDeg": 0
+    },
+    {
+      "name": "turn",
+      "role": "turn",
+      "angle": 0,
+      "armed": false,
+      "file": "anim-turn.glb",
+      "bytes": 121292,
+      "source": "Turning.fbx",
+      "duration": 3.66666674613953,
+      "channels": 53,
+      "groundSpeed": 0.03339091916951857,
+      "rootMotion": {
+        "x": 0.21325579285621643,
+        "y": 0.008778512477874756,
+        "z": 0.11350862309336662,
+        "travel": 0.1224333729419067
+      },
+      "inPlace": false,
+      "rootYawDeg": -36.74
     }
   ],
   "generated": "2026-09-03"

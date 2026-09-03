@@ -30,7 +30,10 @@ const STANDING = /^(idle|punch|pistol)/;
  * in for the whole gait on demand. `many` is a role the game picks at random
  * from: five punches, two falls. `once` is everything triggered explicitly.
  */
-export type ClipRole = 'ladder' | 'goofy' | 'dir' | 'many' | 'once';
+// 'turn' is a turn in place. The converter recognises and loads it; nothing
+// drives it yet, so it costs one action and sits at zero weight. Its root yaw is
+// deliberately NOT stripped -- the rotation is the whole clip.
+export type ClipRole = 'ladder' | 'goofy' | 'dir' | 'many' | 'once' | 'turn';
 
 export interface ClipInfo {
   name: string;

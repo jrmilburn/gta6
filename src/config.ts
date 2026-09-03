@@ -232,6 +232,16 @@ export const CFG = {
        */
       sprintSpeed: 5.5,
       sprintPose: 0.15,
+      /**
+       * Top speed while aiming, m/s.
+       *
+       * Matched to the clips rather than picked for feel. `Pistol Walk
+       * Backward` was authored at 1.34 m/s and `Pistol Strafe` at 2.06; asking
+       * either to carry the player's 4 m/s walk pins the playback clamp and
+       * skates the feet by up to 46%. At 2 m/s both play near their own rate and
+       * plant properly -- and slowing down to aim is what a person does anyway.
+       */
+      aimMoveSpeed: 2,
       /** Camera kick per shot, degrees of pitch, and how long it recovers over. */
       kickDeg: 0.6,
       kickRecover: 0.15,

@@ -176,7 +176,12 @@ export class CombatSystem implements System, CombatState {
     // Facing the camera and strafing is right for a gun held ready and wrong
     // for a sprint: nobody runs flat out sideways.
     p.faceCamera = this.armed && p.onFoot && this.sprinting < 0.5;
-    p.speedCap = this.punching || this.aiming ? C.punch.moveSpeed : Infinity;
+    // Aiming is slower than punching, and both are slower than walking. The aim
+    // figure comes from what the supplied clips can actually carry; see the note
+    // on `aimMoveSpeed`.
+    p.speedCap = this.aiming ? C.pistol.aimMoveSpeed
+      : this.punching ? C.punch.moveSpeed
+        : Infinity;
     if (!rig) return;
     rig.setAim(this.draw * (1 - this.sprinting), this.deps.look.pitch);
     // The aimed movement clips are strafes and back-steps; a sprint is neither,
