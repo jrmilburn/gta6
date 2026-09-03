@@ -12,9 +12,16 @@ import type { AABB, EventName, Renderable, System, Vec2 } from '../types';
 import { CFG } from '../config';
 import { SpatialHash } from '../core/spatial';
 import { InputSmoother, shortestAngle, smoothDamp, smoothDampAngle } from '../core/smooth';
+// `shortestAngle` is still used by renderSync's heading interpolation.
 import { PlayerMesh, type PlayerVisual } from './playerMesh';
 import { Legs } from './playerJump';
 import type { CameraSubject } from '../camera/cameras';
+import { circleVsAabb, type VehicleLike } from './playerCollision';
+
+export {
+  findEnterable, exitPointFor,
+  type VehicleLike, type EnterableVehicle,
+} from './playerCollision';
 
 const RADIUS = 0.4;
 const QUERY_RADIUS = 12;
@@ -28,58 +35,6 @@ const TURN_RATE = (F.turnRateDeg * Math.PI) / 180;
 
 function clamp(v: number, lo: number, hi: number): number {
   return v < lo ? lo : v > hi ? hi : v;
-}
-
-interface CircleHit { nx: number; nz: number; depth: number }
-
-/** Closest-point circle-vs-AABB push-out, with a fallback for a centre already inside the box. */
-function circleVsAabb(px: number, pz: number, r: number, b: AABB): CircleHit | null {
-  const cx = clamp(px, b.minX, b.maxX);
-  const cz = clamp(pz, b.minZ, b.maxZ);
-  const dx = px - cx, dz = pz - cz;
-  const d2 = dx * dx + dz * dz;
-  if (d2 > r * r) return null;
-  if (d2 > 1e-6) {
-    const d = Math.sqrt(d2);
-    return { nx: dx / d, nz: dz / d, depth: r - d };
-  }
-  const left = px - b.minX, right = b.maxX - px, bottom = pz - b.minZ, top = b.maxZ - pz;
-  const m = Math.min(left, right, bottom, top);
-  if (m === left) return { nx: -1, nz: 0, depth: r + left };
-  if (m === right) return { nx: 1, nz: 0, depth: r + right };
-  if (m === bottom) return { nx: 0, nz: -1, depth: r + bottom };
-  return { nx: 0, nz: 1, depth: r + top };
-}
-
-/** The subset of Vehicle a player needs to collide with and take damage from. */
-export interface VehicleLike {
-  pos: Vec2;
-  speed: number;
-  wrecked: boolean;
-}
-
-/** The subset of Vehicle needed to find and describe an enterable car. */
-export interface EnterableVehicle extends VehicleLike {
-  occupied: boolean;
-  heading: number;
-}
-
-/** Nearest non-wrecked, unoccupied vehicle within `radius`, or null. */
-export function findEnterable<T extends EnterableVehicle>(
-  vehicles: readonly T[], p: Vec2, radius: number,
-): T | null {
-  let best: T | null = null, bestD = radius;
-  for (const v of vehicles) {
-    if (v.wrecked || v.occupied) continue;
-    const d = Math.hypot(v.pos.x - p.x, v.pos.z - p.z);
-    if (d < bestD) { bestD = d; best = v; }
-  }
-  return best;
-}
-
-/** Where the player appears when they step out of a vehicle: left side, 1.5 m out. */
-export function exitPointFor(v: EnterableVehicle): Vec2 {
-  return { x: v.pos.x - Math.cos(v.heading) * 1.5, z: v.pos.z + Math.sin(v.heading) * 1.5 };
 }
 
 export interface PlayerHost {
@@ -99,6 +54,8 @@ export interface PlayerOptions {
   groundHeightAt?: (x: number, z: number) => number;
   /** The body to render. Falls back to the procedural humanoid. */
   visual?: PlayerVisual | null;
+  /** Where the player is looking. Movement is measured against its yaw. */
+  look?: { yaw: number } | null;
 }
 
 export class Player implements System, Renderable, CameraSubject {
@@ -114,6 +71,17 @@ export class Player implements System, Renderable, CameraSubject {
   onFoot = true;
   /** 0 while the character is fully solid, 1 while faded out for a car entry (1.4). */
   fade = 0;
+  /**
+   * Face the camera and strafe instead of turning into the direction of travel.
+   * Set while the pistol is drawn (section 7); a character holding a gun keeps
+   * it pointed where the player is looking.
+   */
+  faceCamera = false;
+  /**
+   * Upper bound on the target speed this step, m/s. Infinity for none. Punching
+   * and aiming both hold the character to a walk (sections 6 and 7).
+   */
+  speedCap = Infinity;
 
   readonly mesh: PlayerVisual;
   readonly legs = new Legs();
@@ -124,7 +92,6 @@ export class Player implements System, Renderable, CameraSubject {
   private velX = 0;
   private velZ = 0;
   private turnVel = [0];
-  private camTurnVel = [0];
   private groundVel = [0];
   private groundY = 0;
   private hash = new SpatialHash<AABB>(20);
@@ -133,6 +100,8 @@ export class Player implements System, Renderable, CameraSubject {
   private respawnPoint: Vec2;
   private invulnUntil = 0;
   private groundHeightAt: (x: number, z: number) => number;
+  /** The look direction the movement keys are measured against (section 3). */
+  private readonly look: { yaw: number } | null;
   /** Previous physics state, for render interpolation (1.1). */
   private prev = { x: 0, y: 0, z: 0, heading: 0 };
 
@@ -141,6 +110,7 @@ export class Player implements System, Renderable, CameraSubject {
     this.pos = { x: opts.pos?.x ?? 0, z: opts.pos?.z ?? 0 };
     this.respawnPoint = { ...this.pos };
     this.groundHeightAt = opts.groundHeightAt ?? (() => 0);
+    this.look = opts.look ?? null;
     this.groundY = this.groundHeightAt(this.pos.x, this.pos.z);
     this.y = this.groundY;
     this.mesh = opts.visual ?? new PlayerMesh();
@@ -176,7 +146,16 @@ export class Player implements System, Renderable, CameraSubject {
     this.snapshot();
 
     this.applyMovement(dt);
-    this.legs.step(dt, this.host.input.justPressed('handbrake'));
+    // The visual gets first say on the wind-up, so a supplied jump clip and the
+    // physics impulse leave the ground on the same frame (section 4).
+    const jumping = this.host.input.justPressed('handbrake') && this.legs.grounded
+      && !this.legs.airborne;
+    if (jumping) {
+      const windUp = this.mesh.jump ? this.mesh.jump() : null;
+      if (windUp !== null && windUp !== undefined) this.legs.anticipation = windUp;
+    }
+    this.legs.step(dt, jumping);
+    if (this.legs.justLanded) this.mesh.land?.();
     this.resolveWorldCollisions();
     this.resolveVehicleCollisions();
     this.checkVehicleHits();
@@ -184,6 +163,9 @@ export class Player implements System, Renderable, CameraSubject {
 
     this.speed = Math.hypot(this.velX, this.velZ);
     this.speedFrac = CFG.player.runSpeed > 0 ? clamp(this.speed / CFG.player.runSpeed, 0, 1) : 0;
+    // Kept in step for anything reading the CameraSubject contract; the on-foot
+    // camera reads the look direction directly.
+    if (this.look) this.velocityHeading = this.look.yaw;
   }
 
   /** Record the state the next render frame interpolates *from*. */
@@ -208,17 +190,24 @@ export class Player implements System, Renderable, CameraSubject {
     let targetX = 0, targetZ = 0;
     if (len > 0.001) {
       const nx = ix / len, nz = iz / len;
-      // Camera-relative: transform the input by the lagged camera-follow heading
-      // (not the character's own facing) so "forward" always means "away from
-      // the camera" (plan section 5).
-      const basis = this.velocityHeading;
+      // Camera-relative: "forward" always means away from the camera.
+      //
+      // The basis is the mouse's own look yaw, not a camera heading derived
+      // from the character's velocity. That distinction matters: the old basis
+      // chased the character while the character turned toward the basis, and
+      // two things steering each other is a loop with no damping at rest.
+      const basis = this.look ? this.look.yaw : this.velocityHeading;
       const fx = Math.sin(basis), fz = Math.cos(basis);
       // Screen-right is cross(cameraForward, worldUp) = (-Fz, Fx).
       const rx = -Math.cos(basis), rz = Math.sin(basis);
       const dirX = fx * nz + rx * nx;
       const dirZ = fz * nz + rz * nx;
       const dirLen = Math.hypot(dirX, dirZ) || 1;
-      const want = (input.isDown('sprint') ? CFG.player.runSpeed : CFG.player.walkSpeed) * mag;
+      const top = Math.min(
+        input.isDown('sprint') ? CFG.player.runSpeed : CFG.player.walkSpeed,
+        this.speedCap,
+      );
+      const want = top * mag;
       targetX = (dirX / dirLen) * want;
       targetZ = (dirZ / dirLen) * want;
     }
@@ -233,31 +222,27 @@ export class Player implements System, Renderable, CameraSubject {
     this.pos.x += this.velX * dt;
     this.pos.z += this.velZ * dt;
 
-    this.turnToward(dt, targetZ !== 0 || targetX !== 0 ? Math.max(0, iz) : 0);
+    this.turnToward(dt);
   }
 
   /**
    * Face the direction of travel at a capped rate rather than snapping to it.
-   * Below `facingMinSpeed` the last facing is held, so releasing the stick does
-   * not spin the character on the spot as the residual velocity decays.
+   *
+   * Below `facingMinSpeed` the last facing is held, so releasing the key does
+   * not spin the character on the spot as the residual velocity decays -- and
+   * `atan2` is never asked to find a direction in numerical noise.
+   *
+   * While `faceCamera` is set the character faces where the player is looking
+   * instead and strafes, which is what a drawn pistol needs (section 7).
    */
-  private turnToward(dt: number, forwardInput: number): void {
-    const speed = Math.hypot(this.velX, this.velZ);
-    if (speed > F.facingMinSpeed) {
-      const want = Math.atan2(this.velX, this.velZ);
-      this.heading = smoothDampAngle(this.heading, want, this.turnVel, F.turnSmooth, dt, TURN_RATE);
-    }
-    // The camera yaw is the basis the movement above was derived from, so
-    // letting it chase the resulting heading is a feedback loop: holding A would
-    // swing the camera left, which swings "left" further left, and the character
-    // circles instead of strafing. Only the forward component of the input is
-    // allowed to steer the camera.
-    if (forwardInput > 0.01) {
-      const target = this.velocityHeading + shortestAngle(this.velocityHeading, this.heading) * forwardInput;
-      this.velocityHeading = smoothDampAngle(
-        this.velocityHeading, target, this.camTurnVel, F.cameraTurnSmooth, dt, TURN_RATE,
-      );
-    }
+  private turnToward(dt: number): void {
+    const want = this.faceCamera && this.look
+      ? this.look.yaw
+      : (Math.hypot(this.velX, this.velZ) > F.facingMinSpeed
+        ? Math.atan2(this.velX, this.velZ)
+        : null);
+    if (want === null) return;
+    this.heading = smoothDampAngle(this.heading, want, this.turnVel, F.turnSmooth, dt, TURN_RATE);
   }
 
   /**
@@ -333,7 +318,7 @@ export class Player implements System, Renderable, CameraSubject {
     this.pos.x = this.respawnPoint.x;
     this.pos.z = this.respawnPoint.z;
     this.velX = 0; this.velZ = 0;
-    this.turnVel[0] = 0; this.camTurnVel[0] = 0; this.groundVel[0] = 0;
+    this.turnVel[0] = 0; this.groundVel[0] = 0;
     this.smooth.moveX.reset(); this.smooth.moveZ.reset();
     this.legs.reset();
     this.groundY = this.groundHeightAt(this.pos.x, this.pos.z);
@@ -352,7 +337,7 @@ export class Player implements System, Renderable, CameraSubject {
   placeAt(x: number, z: number, heading: number): void {
     this.pos.x = x; this.pos.z = z;
     this.velX = 0; this.velZ = 0;
-    this.turnVel[0] = 0; this.camTurnVel[0] = 0; this.groundVel[0] = 0;
+    this.turnVel[0] = 0; this.groundVel[0] = 0;
     this.smooth.moveX.reset(); this.smooth.moveZ.reset();
     this.legs.reset();
     this.heading = heading;

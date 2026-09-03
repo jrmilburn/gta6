@@ -46,6 +46,12 @@ export interface CameraFrame {
    * a handbrake turn swings the camera rather than snapping it (1.5).
    */
   yaw: number;
+  /** Absolute look yaw from the mouse; the on-foot camera orbits along it. */
+  lookYaw: number;
+  /** Look elevation from the mouse, radians. Positive looks down. */
+  lookPitch: number;
+  /** Chase look-around offset from the mouse, which decays back to zero. */
+  lookOffset: number;
 }
 
 export type CameraModeImpl = (s: CameraSubject, f: CameraFrame, dt: number) => void;
@@ -55,7 +61,11 @@ export type CameraModeImpl = (s: CameraSubject, f: CameraFrame, dt: number) => v
  * rate-limited follow yaw, so the body angle reads as a slide (plan section 4).
  */
 const chase: CameraModeImpl = (s, f) => {
-  const fx = Math.sin(f.yaw), fz = Math.cos(f.yaw);
+  // Mouse X swings the eye around the car without moving where it looks; the
+  // offset decays back to zero on its own once the mouse stops (section 3).
+  // Mouse Y is deliberately ignored in a vehicle.
+  const yaw = f.yaw + f.lookOffset;
+  const fx = Math.sin(yaw), fz = Math.cos(yaw);
   f.eye.set(
     s.pos.x - fx * CFG.camera.chaseDist,
     s.y + CFG.camera.chaseHeight,
@@ -93,8 +103,10 @@ export class CameraRig implements Renderable {
   private readonly frame: CameraFrame = {
     eye: new THREE.Vector3(), look: new THREE.Vector3(),
     fov: CFG.camera.fovBase, posSmooth: C.chasePos, lookSmooth: C.chaseLook,
-    occlude: true, yaw: 0,
+    occlude: true, yaw: 0, lookYaw: 0, lookPitch: 0, lookOffset: 0,
   };
+  /** Where the player is looking. Null until session.ts hands one over. */
+  private look: { yaw: number; pitch: number; offset: number } | null = null;
   private readonly eyeDamp = new Vec3Damp();
   private readonly lookDamp = new Vec3Damp();
   private readonly final = new THREE.Vector3();
@@ -110,6 +122,8 @@ export class CameraRig implements Renderable {
   /** Smoothed occlusion factor, 1 = free, <1 = pulled in toward the subject. */
   private occlusion = 1;
   private occlusionVel = [0];
+  /** Pitch recoil from a shot (section 7), radians, decaying to zero. */
+  private pitchKick = 0;
   private shake = 0;
   private shakeT = 0;
   private shakeClock = 0;
@@ -134,6 +148,11 @@ export class CameraRig implements Renderable {
   setSubject(s: CameraSubject | null): void {
     this.subject = s;
     this.primed = false;
+  }
+
+  /** The mouse-driven look direction every mode reads (section 3). */
+  setLook(look: { yaw: number; pitch: number; offset: number }): void {
+    this.look = look;
   }
 
   /**
@@ -167,6 +186,15 @@ export class CameraRig implements Renderable {
     this.setMode(names[(i + 1) % names.length]);
   }
 
+  /**
+   * Recoil: tip the view up by `radians` and let it settle back.
+   *
+   * Applied after lookAt rather than by moving the look target, so the kick is
+   * exactly the angle asked for however far the camera happens to be from the
+   * subject.
+   */
+  kickPitch(radians: number): void { this.pitchKick += radians; }
+
   /** Screen shake, 0..1. */
   kick(amount: number): void {
     this.shake = Math.max(this.shake, amount);
@@ -184,6 +212,9 @@ export class CameraRig implements Renderable {
     f.posSmooth = C.chasePos;
     f.lookSmooth = C.chaseLook;
     f.yaw = this.followYaw;
+    f.lookYaw = this.look?.yaw ?? this.followYaw;
+    f.lookPitch = this.look?.pitch ?? CFG.feel.mouse.restPitch;
+    f.lookOffset = this.look?.offset ?? 0;
     (MODES[this.mode] ?? chase)(s, f, dt);
 
     if (!this.primed) {
@@ -214,6 +245,12 @@ export class CameraRig implements Renderable {
     this.applyShake(dt);
     this.cam.position.copy(this.final).add(this.offset);
     this.cam.lookAt(look);
+    if (this.pitchKick !== 0) {
+      this.cam.rotateX(this.pitchKick);
+      this.pitchKick -= this.pitchKick
+        * Math.min(1, dt / Math.max(CFG.combat.pistol.kickRecover, 1e-3));
+      if (Math.abs(this.pitchKick) < 1e-5) this.pitchKick = 0;
+    }
 
     const fov = smoothDamp(this.cam.fov, f.fov, this.fovVel, C.fov, dt);
     if (Math.abs(this.cam.fov - fov) > 0.005) {

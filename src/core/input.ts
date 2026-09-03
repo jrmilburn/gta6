@@ -5,6 +5,7 @@ export type Action =
   | 'forward' | 'back' | 'left' | 'right'
   | 'handbrake' | 'sprint' | 'interact' | 'camera'
   | 'hud' | 'respawn' | 'showcase' | 'pause' | 'dance'
+  | 'goofy' | 'arm'
   | 'up' | 'down';
 
 const BINDINGS: Record<Action, string[]> = {
@@ -16,11 +17,16 @@ const BINDINGS: Record<Action, string[]> = {
   sprint:    ['ShiftLeft', 'ShiftRight'],
   interact:  ['KeyE'],
   camera:    ['KeyC'],
-  hud:       ['KeyH'],
+  // DECISION: the HUD toggle moves off H, which this pass gives to the pistol.
+  // Backquote is the conventional debug-overlay key and collides with nothing
+  // the browser wants.
+  hud:       ['Backquote'],
   respawn:   ['KeyR'],
   showcase:  ['KeyK'],
   pause:     ['Escape'],
   dance:     ['KeyG'],
+  goofy:     ['KeyP'],
+  arm:       ['KeyH'],
   up:        ['KeyQ'],
   down:      ['KeyE'],
 };
@@ -31,7 +37,17 @@ export class Input {
   private consumed = false;
   /** Set by scripted sequences (showcase) to override the human. */
   scripted: Partial<Record<Action, number>> | null = null;
-  readonly mouse = { dx: 0, dy: 0, locked: false };
+  /**
+   * Mouse state. `dx`/`dy` accumulate movement for the frame and are cleared by
+   * endFrame(); `left`/`right` are held state and `leftPressed`/`rightPressed`
+   * are edge-triggered the same way keys are, so a click is one click however
+   * many physics steps the frame ran.
+   */
+  readonly mouse = {
+    dx: 0, dy: 0, locked: false,
+    left: false, right: false,
+    leftPressed: false, rightPressed: false,
+  };
   onFirstKey: (() => void) | null = null;
   private gotFirstKey = false;
 
@@ -51,8 +67,21 @@ export class Input {
       this.mouse.dx += e.movementX;
       this.mouse.dy += e.movementY;
     });
+    window.addEventListener('mousedown', (e) => {
+      if (e.button === 0) { this.mouse.left = true; this.mouse.leftPressed = true; }
+      if (e.button === 2) { this.mouse.right = true; this.mouse.rightPressed = true; }
+    });
+    window.addEventListener('mouseup', (e) => {
+      if (e.button === 0) this.mouse.left = false;
+      if (e.button === 2) this.mouse.right = false;
+    });
+    // Right-drag is aim, so the context menu has to go or every aim opens it.
+    window.addEventListener('contextmenu', (e) => e.preventDefault());
     document.addEventListener('pointerlockchange', () => {
       this.mouse.locked = document.pointerLockElement !== null;
+      // Buttons held when the lock changes are never released, because the
+      // mouseup lands somewhere else.
+      if (!this.mouse.locked) { this.mouse.left = false; this.mouse.right = false; }
     });
     // Test hook.
     (window as unknown as { __input: unknown }).__input = {
@@ -62,6 +91,13 @@ export class Input {
         if (!this.gotFirstKey) { this.gotFirstKey = true; this.onFirstKey?.(); }
       },
       tap: (code: string) => { this.pressed.add(code); this.down.add(code); setTimeout(() => this.down.delete(code), 60); },
+      // Mouse injection for the smoke suite, which cannot take a pointer lock.
+      mouse: (dx: number, dy: number) => { this.mouse.dx += dx; this.mouse.dy += dy; },
+      button: (which: 'left' | 'right', isDown: boolean) => {
+        this.mouse[which] = isDown;
+        if (isDown) this.mouse[which === 'left' ? 'leftPressed' : 'rightPressed'] = true;
+      },
+      lock: (v: boolean) => { this.mouse.locked = v; },
     };
   }
 
@@ -100,6 +136,8 @@ export class Input {
    */
   endStep(): void {
     this.pressed.clear();
+    this.mouse.leftPressed = false;
+    this.mouse.rightPressed = false;
     this.consumed = true;
   }
 
@@ -109,7 +147,11 @@ export class Input {
    * linger and re-fire every frame.
    */
   endFrame(): void {
-    if (!this.consumed) this.pressed.clear();
+    if (!this.consumed) {
+      this.pressed.clear();
+      this.mouse.leftPressed = false;
+      this.mouse.rightPressed = false;
+    }
     this.consumed = false;
     this.mouse.dx = 0;
     this.mouse.dy = 0;
