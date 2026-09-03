@@ -59,6 +59,18 @@ export interface PlayerVisual {
   group: THREE.Object3D;
   update(f: PlayerMeshFrame): void;
   dispose(): void;
+  /**
+   * Optional: play a jump clip, and report how long its wind-up is.
+   *
+   * The controller uses the returned seconds as its own anticipation, which is
+   * what lines the clip's take-off frame up with the physics impulse -- the
+   * character leaves the ground on the frame the animation does (section 4).
+   * A visual with no jump clip returns null and the controller keeps its own
+   * timing.
+   */
+  jump?(): number | null;
+  /** Optional: the feet are back on the ground. */
+  land?(): void;
 }
 
 /** One articulated limb: pivot at the joint, child pivot for the second bone. */

@@ -35,8 +35,22 @@ const FBX2GLTF = path.join(
  * from, so five punches keep their own names and arrive as one array.
  */
 const CLIP_NAMES = [
+  // Pistol clips first: "Pistol Walk Backward" is a pistol clip, and the
+  // backward rule further down would otherwise claim it as an ordinary jog.
+  [/pistol ?idle/i, 'pistolIdle', 'once'],
+  [/pistol.*strafe/i, 'pistolStrafe', 'dir', 90, true],
+  [/pistol.*back/i, 'pistolBack', 'dir', 180, true],
+  [/pistol.*(walk|forward|run)/i, 'pistolWalk', 'dir', 0, true],
+  [/pistol ?aim|aiming/i, 'pistolAim', 'once'],
+  [/shoot|pistol|fire/i, 'pistolFire', 'once'],
+
   [/goofy/i, 'jogGoofy', 'goofy'],
-  [/back ?ward|jog ?back/i, 'jogBack', 'back'],
+  // Diagonals before the plain directions, for the same reason.
+  [/back ?ward.*diagonal|diagonal.*back/i, 'jogBackDiag', 'dir', 135],
+  [/forward.*diagonal|diagonal.*forward/i, 'jogFwdDiag', 'dir', 45],
+  [/back ?ward|jog ?back/i, 'jogBack', 'dir', 180],
+  [/strafe|side ?step/i, 'jogStrafe', 'dir', 90],
+
   [/strut|walk/i, 'walk', 'ladder'],
   [/jog/i, 'jog', 'ladder'],
   [/slow ?run/i, 'slowRun', 'ladder'],
@@ -45,9 +59,6 @@ const CLIP_NAMES = [
   [/jump|leap/i, 'jump', 'once'],
   [/punch|hook|elbow|jab|combo/i, 'punch', 'many'],
   [/fall|knock|stagger/i, 'fall', 'many'],
-  [/pistol ?idle/i, 'pistolIdle', 'once'],
-  [/pistol ?aim|aiming/i, 'pistolAim', 'once'],
-  [/shoot|pistol|fire/i, 'pistolFire', 'once'],
   [/idle|breath/i, 'idle', 'ladder'],
 ];
 const HERO = /character|hero|main|t-?pose/i;
@@ -77,17 +88,23 @@ function slug(file) {
 }
 
 /**
- * The clip's role and name. Both the file name and its folder are matched, so
- * dropping five files into `punches/` is enough to make them all punches
- * whatever they are individually called.
+ * The clip's role, name and -- for a directional clip -- which way it moves
+ * relative to the character's facing.
+ *
+ * Both the file name and its folder are matched, so dropping five files into
+ * `punches/` is enough to make them all punches whatever they are individually
+ * called. The full path is matched too, which is how a clip in
+ * `gun/movement/while aimed/` is known to be a pistol clip.
  */
 function roleFor(file) {
   const base = path.basename(file, path.extname(file));
-  const folder = path.basename(path.dirname(file));
-  for (const [re, name, role] of CLIP_NAMES) {
-    if (re.test(base) || re.test(folder)) return { name, role };
+  const rel = path.relative(RAW, file).split(path.sep).join('/');
+  for (const [re, name, role, angle, armed] of CLIP_NAMES) {
+    if (re.test(base) || re.test(rel)) {
+      return { name, role, angle: angle ?? 0, armed: armed === true };
+    }
   }
-  return { name: slug(file), role: 'once' };
+  return { name: slug(file), role: 'once', angle: 0, armed: false };
 }
 
 /** Recursive .fbx hunt, skipping the car directories and FBX texture dumps. */
@@ -219,7 +236,7 @@ function buildHero(fbx) {
 }
 
 function buildClip(fbx, seen) {
-  const { role } = roleFor(fbx);
+  const { role, angle, armed } = roleFor(fbx);
   let { name } = roleFor(fbx);
   if (role === 'many') {
     // punch, punch-2, punch-3... The runtime picks from the set by role, so the
@@ -250,8 +267,13 @@ function buildClip(fbx, seen) {
   console.log('  ' + (size / 1024).toFixed(0) + ' KB, ' + report.duration.toFixed(3) + ' s, '
     + report.channels + ' channels, root travel ' + travel.toFixed(3) + ' m -> '
     + groundSpeed.toFixed(3) + ' m/s');
+  // A directional clip's angle is read off its own root motion where it has
+  // any: the file name says a clip is a strafe, but only the motion says which
+  // way it strafes, and getting that backwards puts the character sidestepping
+  // into the thing it is trying to circle.
+  const measured = role === 'dir' && travel > 0.05 ? Math.round(r.travelDeg) : angle;
   return {
-    name, role, file: 'anim-' + name + '.glb', bytes: size,
+    name, role, angle: measured, armed, file: 'anim-' + name + '.glb', bytes: size,
     source: path.relative(RAW, fbx).split(path.sep).join('/'),
     duration: report.duration, channels: report.channels, groundSpeed,
     rootMotion: r ? { x: r.rangeX, y: r.rangeY, z: r.rangeZ, travel: r.travel } : null,

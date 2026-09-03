@@ -78,6 +78,28 @@ export const CFG = {
     /** How long `G` dances for before it returns you to normal control. */
     danceSeconds: 8,
 
+    /** Mouse look (integration pass 2, section 3). */
+    mouse: {
+      /** Radians of turn per pixel of mouse movement. */
+      sensitivity: 0.0022,
+      invertY: false,
+      /**
+       * Camera elevation limits, degrees. Positive is above the subject looking
+       * down. See the DECISION on MouseLook.pitch for why the range is not
+       * symmetric.
+       */
+      pitchMinDeg: -35,
+      pitchMaxDeg: 60,
+      /** Where the camera sits before the mouse has been touched. */
+      restPitch: 0.18,
+      /** SmoothDamp time for the look direction; shorter than the position. */
+      lookSmooth: 0.06,
+      /** How long the mouse must be still before the camera drifts back. */
+      recentreDelay: 0.35,
+      /** ...and how long the drift itself takes. */
+      recentreTime: 1.2,
+    },
+
     /** Camera smoothing (1.5). All values are SmoothDamp smooth-times. */
     camera: {
       chasePos: 0.18,
@@ -148,6 +170,93 @@ export const CFG = {
      * invisible and takes 53k triangles down to something instanceable.
      */
     staticCluster: 0.06,
+  },
+
+  /**
+   * Punching, the pistol, and what either does to a civilian or a wanted level
+   * (integration pass 2, sections 6-9).
+   *
+   * No blood, no gore, no death anywhere in here: a civilian who is hit falls
+   * over, lies still, and later gets up. That is the whole of it.
+   */
+  combat: {
+    punch: {
+      /** Crossfade in and out of the punch overlay, seconds. */
+      blendIn: 0.08,
+      blendOut: 0.15,
+      /** Fraction of the clip's duration before another punch may start. */
+      cooldownFraction: 0.7,
+      /** Where in the clip the fist arrives; measured once, see combat.ts. */
+      impactFraction: 0.45,
+      /**
+       * How long the fist stays dangerous, either side of that moment. A single
+       * instant misses anyone who has taken a step since the swing began.
+       */
+      activeBefore: 0.06,
+      activeAfter: 0.14,
+      /**
+       * Longest a punch may take to land. The supplied combo runs 2.2 s, and a
+       * punch that connects nearly two seconds after the click reads as broken
+       * however faithful it is to the clip; longer clips are sped up to fit.
+       */
+      maxTimeToImpact: 0.4,
+      /** Hit sphere: radius, how far in front, and how high. */
+      reach: 0.9,
+      radius: 1.0,
+      height: 1.0,
+      /** Damage a punched car takes, and the shove it gets. */
+      vehicleDamage: 5,
+      vehicleImpulse: 1.2,
+      /** The character can still walk while punching, but no faster. */
+      moveSpeed: 4,
+    },
+    pistol: {
+      drawTime: 0.3,
+      holsterTime: 0.3,
+      /** Minimum seconds between shots. */
+      fireInterval: 0.2,
+      range: 120,
+      vehicleDamage: 15,
+      /** Over-the-shoulder aim camera. */
+      aimDistance: 2.2,
+      aimHeight: 1.5,
+      aimShoulder: 0.6,
+      aimFov: 45,
+      aimIn: 0.15,
+      aimOut: 0.2,
+      /** Camera kick per shot, degrees of pitch, and how long it recovers over. */
+      kickDeg: 0.6,
+      kickRecover: 0.15,
+      /** Muzzle flash and tracer lifetimes, seconds. */
+      flashTime: 0.033,
+      tracerTime: 0.05,
+      /** How long a bullet mark stays on a wall. */
+      decalSeconds: 10,
+      decalRadius: 0.06,
+    },
+    /** Civilian knockdown (section 8). */
+    knockdown: {
+      /** Seconds face-down before getting up. */
+      downSeconds: 60,
+      /** Playback rate of the fall clip run backwards as a get-up. */
+      getUpRate: 2,
+      /** A downed pedestrian this far from the player is recycled instead. */
+      despawnDistance: 120,
+      /** Pedestrians this close to a knockdown flee. */
+      witnessRadius: 20,
+    },
+    /** Heat, in the units the wanted meter counts (section 9). */
+    heat: {
+      punchKnockdown: 40,
+      shotKnockdown: 100,
+      gunfireNearPolice: 100,
+      shootPolice: 150,
+      /** Radius within which a police car notices gunfire. */
+      policeHearing: 40,
+      /** Heat per star, and how fast heat bleeds off with nothing happening. */
+      perStar: 100,
+      decayPerSecond: 100 / 15,
+    },
   },
 };
 

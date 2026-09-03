@@ -67,7 +67,11 @@ export class Game {
     // frame. Manual reset once per frame makes info.render.calls the honest
     // per-frame total, post passes included.
     this.renderer.info.autoReset = false;
-    this.renderer.shadowMap.enabled = true;
+    // `?shadows=0` drops the shadow pass. It re-renders every caster in the
+    // world from the sun's point of view, which on a software rasteriser is
+    // most of the frame -- and a test measuring the player's facing has no use
+    // for it. Never a gameplay switch; a throughput one.
+    this.renderer.shadowMap.enabled = param('shadows') !== '0';
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     mount.appendChild(this.renderer.domElement);
 

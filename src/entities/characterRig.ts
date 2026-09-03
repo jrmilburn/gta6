@@ -13,17 +13,23 @@
 import * as THREE from 'three';
 import { clone as cloneSkeleton } from 'three/examples/jsm/utils/SkeletonUtils.js';
 import { CFG } from '../config';
-import { smoothDamp } from '../core/smooth';
-import { buildLadder, findBone, type CharacterSource, type Rung } from '../core/character';
+import type { CharacterSource } from '../core/character';
+import { BoneOffsets } from './boneOffsets';
+import { Locomotion } from './characterLocomotion';
+import { Layer, measureImpact, measureTakeOff, upperBodyAdditive } from './characterActions';
+import { RigMaterials } from './characterMaterials';
+import { Flourish } from './characterFlourish';
 
 const A = CFG.anim;
-const F = CFG.feel.foot;
-const LEAN_ACCEL = (F.leanAccelDeg * Math.PI) / 180;
-const LEAN_TURN = (F.leanTurnDeg * Math.PI) / 180;
-const AIR_LEAN = (A.airLeanDeg * Math.PI) / 180;
-const SWAY = (A.swayDeg * Math.PI) / 180;
 /** Target standing height; the rig only rescales if the source is outside the band. */
 const HEIGHT_MIN = 1.75, HEIGHT_MAX = 1.85, HEIGHT_TARGET = 1.8;
+/**
+ * How long the character is actually off the ground, from playerJump.ts's own
+ * constants: rise and fall for a 1.2 m jump under 22 m/s^2, plus the apex hang.
+ * The jump clip is fitted to this rather than the other way round -- the arc is
+ * tuned and the clip is not.
+ */
+const AIR_TIME = 2 * Math.sqrt((2 * 1.2) / 22) + CFG.feel.foot.hangTime;
 
 export interface CharacterFrame {
   dt: number;
@@ -51,39 +57,38 @@ export interface RigOptions {
   castShadow?: boolean;
 }
 
-interface Track {
-  name: string;
-  action: THREE.AnimationAction;
-  /** Metres per second the clip covers at timeScale 1. 0 for the idle pose. */
-  speed: number;
-  weight: number;
-}
-
 export class CharacterRig {
   readonly group = new THREE.Group();
   readonly root: THREE.Object3D;
 
+  /** The speed-driven blend. Public so callers can toggle goofy mode. */
+  readonly locomotion: Locomotion;
+  /** Full-body one-shots: the jump, a knockdown. */
+  readonly oneShot = new Layer();
+  /** Additive upper-body overlays: a punch, a shot, a held aim pose. */
+  readonly overlay = new Layer();
+
   private readonly mixer: THREE.AnimationMixer;
-  private readonly tracks: Track[] = [];
+  private readonly source: CharacterSource;
   private readonly air: THREE.AnimationAction | null;
   private readonly dance: THREE.AnimationAction | null;
-  private readonly ladder: Rung[];
-  private readonly spine: THREE.Bone | null;
-  private readonly chest: THREE.Bone | null;
-  private readonly hips: THREE.Bone | null;
-  private readonly chestRest = new THREE.Vector3(1, 1, 1);
-  private readonly materials: THREE.Material[] = [];
+  /** Additive upper-body copies, built on first use and cached. */
+  private readonly additive = new Map<string, THREE.AnimationAction>();
+  /** Owns the per-rig material copies, the palette swap and the door fade. */
+  private readonly skins: RigMaterials;
+  /** Reversible procedural pose adjustments; see boneOffsets.ts. */
+  private readonly offsets = new BoneOffsets();
+  /** Lean, breath, weight shift and the aim arm; see characterFlourish.ts. */
+  private readonly flourish: Flourish;
 
-  private lean = 0;
-  private leanVel = [0];
-  private bank = 0;
-  private bankVel = [0];
-  private squash = 0;
-  private lastSpeed = 0;
+  /** Extra pitch applied to the gun arm so it tracks the camera (section 7). */
+  /** Cached measurement of the jump clip's take-off frame; -1 until measured. */
+  private jumpTakeOff = -1;
+  private aimPitch = 0;
+  private aimAmount = 0;
   private danceWeight = 0;
   private airWeight = 0;
   private dancing = false;
-  private opacity = 1;
 
   /**
    * Hold the current pose without advancing it. A tumbling pedestrian is thrown
@@ -105,22 +110,11 @@ export class CharacterRig {
     const fit = h >= HEIGHT_MIN && h <= HEIGHT_MAX ? 1 : HEIGHT_TARGET / Math.max(h, 0.1);
     this.root.scale.setScalar(fit * (opts.scale ?? 1));
 
-    this.applyMaterials(opts);
+    this.skins = new RigMaterials(this.root, opts.materials);
 
+    this.source = source;
     this.mixer = new THREE.AnimationMixer(this.root);
-    this.ladder = buildLadder(source.info);
-    const offset = opts.phaseOffset ?? 0;
-    for (const rung of this.ladder) {
-      const clip = source.clips.get(rung.name);
-      if (!clip) continue;
-      const action = this.mixer.clipAction(clip);
-      action.play();
-      action.enabled = true;
-      action.setEffectiveWeight(0);
-      action.time = (offset * clip.duration) % Math.max(clip.duration, 1e-3);
-      this.tracks.push({ name: rung.name, action, speed: rung.speed, weight: 0 });
-    }
-
+    this.locomotion = new Locomotion(this.mixer, source, opts.phaseOffset ?? 0);
     this.air = this.makeAirPose(source);
     const danceClip = source.clips.get('dance');
     this.dance = danceClip ? this.mixer.clipAction(danceClip) : null;
@@ -131,10 +125,7 @@ export class CharacterRig {
       this.dance.setEffectiveWeight(0);
     }
 
-    this.spine = findBone(this.root, 'Spine');
-    this.chest = findBone(this.root, 'Spine2');
-    this.hips = findBone(this.root, 'Hips');
-    if (this.chest) this.chestRest.copy(this.chest.scale);
+    this.flourish = new Flourish(this.root, this.offsets);
 
     const cast = opts.castShadow !== false;
     this.root.traverse((o) => {
@@ -164,77 +155,143 @@ export class CharacterRig {
     return action;
   }
 
-  /**
-   * Swap in palette materials, or take private copies so opacity is per-rig.
-   *
-   * Only the copies go in `materials`: a palette material is shared by every
-   * pedestrian wearing it, so fading one out -- or disposing one rig -- must not
-   * reach the others.
-   */
-  private applyMaterials(opts: RigOptions): void {
-    const seen = new Set<string>();
-    this.root.traverse((o) => {
-      const mesh = o as THREE.Mesh;
-      if (!mesh.isMesh) return;
-      const src = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-      const out: THREE.Material[] = [];
-      for (const m of src) {
-        const shared = opts.materials?.get(m.name);
-        if (shared) { out.push(shared); continue; }
-        const copy = m.clone();
-        out.push(copy);
-        if (!seen.has(copy.uuid)) { seen.add(copy.uuid); this.materials.push(copy); }
-      }
-      mesh.material = out.length === 1 ? out[0] : out;
-    });
-  }
-
   /** Re-dress this rig in another palette's materials (pedestrian LOD swap). */
-  setPalette(materials: Map<string, THREE.Material>): void {
-    this.root.traverse((o) => {
-      const mesh = o as THREE.Mesh;
-      if (!mesh.isMesh) return;
-      const src = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-      const out = src.map((m) => materials.get(m.name) ?? m);
-      mesh.material = out.length === 1 ? out[0] : out;
-    });
-  }
+  setPalette(materials: Map<string, THREE.Material>): void { this.skins.setPalette(materials); }
 
   /** True while the dance clip is the one driving the body. */
   get isDancing(): boolean { return this.dancing; }
 
   /**
-   * The ground speed the feet are currently describing: every playing
-   * locomotion clip's authored speed, scaled by its playback rate and weighted
-   * by how much of it is showing.
+   * The ground speed the feet are currently describing.
    *
-   * This is the honest measure of foot sliding. If it matches the speed the
-   * controller is actually moving at, the contact point is planted; if it does
-   * not, the character is skating by exactly the difference. The smoke suite
-   * asserts on it rather than on eyeballed video.
+   * The honest measure of foot sliding: if it matches the speed the controller
+   * is actually moving at, the contact point is planted; if it does not, the
+   * character is skating by exactly the difference. The smoke suite asserts on
+   * it rather than on eyeballed video.
    */
-  get footSpeed(): number {
-    let sum = 0;
-    for (const t of this.tracks) {
-      if (t.speed <= 0.05) continue;
-      sum += t.action.getEffectiveWeight() * t.action.timeScale * t.speed;
-    }
-    return sum;
-  }
+  get footSpeed(): number { return this.locomotion.footSpeed; }
 
   /** Per-clip weights and playback rates, for the smoke suite. */
   debug(): Record<string, { weight: number; timeScale: number }> {
     const out: Record<string, { weight: number; timeScale: number }> = {};
-    for (const t of this.tracks) {
-      out[t.name] = {
-        weight: +t.action.getEffectiveWeight().toFixed(3),
-        timeScale: +t.action.timeScale.toFixed(3),
-      };
-    }
+    this.locomotion.debug(out);
     out.dance = { weight: +this.danceWeight.toFixed(3), timeScale: 1 };
     out.air = { weight: +this.airWeight.toFixed(3), timeScale: 1 };
+    out.oneShot = { weight: +this.oneShot.weight.toFixed(3), timeScale: 1 };
+    out.overlay = { weight: +this.overlay.weight.toFixed(3), timeScale: 1 };
     return out;
   }
+
+  /** Names of every clip carrying `role`, for callers that pick at random. */
+  clipsWithRole(role: 'many' | 'once'): string[] { return this.source.byRole(role); }
+
+  /** True when a clip of that name was supplied. */
+  has(name: string): boolean { return this.source.clips.has(name); }
+
+  /** Seconds `name` runs for, or 0 if it was not supplied. */
+  durationOf(name: string): number { return this.source.info.get(name)?.duration ?? 0; }
+
+  /**
+   * Play a full-body one-shot: the jump, a knockdown. It takes the character
+   * over for its duration, and the locomotion blend fades down by exactly how
+   * much of it is showing rather than stopping, so the landing eases back into
+   * whatever the legs were doing.
+   */
+  playOneShot(
+    name: string,
+    opts: { blendIn?: number; blendOut?: number; timeScale?: number; hold?: boolean; from?: number } = {},
+  ): boolean {
+    const clip = this.source.clips.get(name);
+    if (!clip) return false;
+    this.oneShot.play(this.mixer.clipAction(clip), name, opts);
+    return true;
+  }
+
+  /**
+   * Play an additive upper-body overlay: a punch, a shot, a held aim pose.
+   * The legs keep the locomotion blend untouched (see characterActions.ts).
+   */
+  playOverlay(
+    name: string,
+    opts: {
+      blendIn?: number; blendOut?: number; timeScale?: number;
+      hold?: boolean; from?: number; loop?: boolean;
+    } = {},
+  ): boolean {
+    const action = this.additiveAction(name);
+    if (!action) return false;
+    this.overlay.play(action, name, opts);
+    return true;
+  }
+
+  /** Hold an overlay frozen on one frame -- an aim pose from a firing clip. */
+  freezeOverlay(at: number): void { this.overlay.freeze(at); }
+
+  /** Drive the overlay's weight directly, for a pose held part-way in. */
+  setOverlayWeight(w: number): void { this.overlay.setTarget(w); }
+
+  private additiveAction(name: string): THREE.AnimationAction | null {
+    const cached = this.additive.get(name);
+    if (cached) return cached;
+    const clip = this.source.clips.get(name);
+    if (!clip) return null;
+    // A pistol clip is a pose and is measured against the idle; a punch is a
+    // motion and is measured against its own start. See upperBodyAdditive.
+    const reference = name.startsWith('pistol') ? this.source.clips.get('idle') : undefined;
+    const action = this.mixer.clipAction(upperBodyAdditive(clip, reference));
+    action.blendMode = THREE.AdditiveAnimationBlendMode;
+    action.setEffectiveWeight(0);
+    this.additive.set(name, action);
+    return action;
+  }
+
+  /** Where in `name` the fist arrives, as a fraction of its duration. */
+  impactOf(name: string): number {
+    const clip = this.source.clips.get(name);
+    return clip ? measureImpact(this.source, clip) : 0.45;
+  }
+
+  /** Where in `name` the feet leave the ground, in seconds. */
+  takeOffOf(name: string): number {
+    const clip = this.source.clips.get(name);
+    return clip ? measureTakeOff(clip) : 0;
+  }
+
+  /**
+   * Play the jump clip and report its wind-up, so the controller can hold the
+   * impulse until the animation's own take-off frame (section 4).
+   *
+   * The clip is stretched or squeezed to fit the airborne time the physics will
+   * actually produce, within the clamp the brief sets; past that it is simply
+   * cut short by the landing crossfade.
+   */
+  jump(): number | null {
+    if (!this.has('jump')) return null;
+    if (this.jumpTakeOff < 0) this.jumpTakeOff = this.takeOffOf('jump');
+    const air = Math.max(0.1, this.durationOf('jump') - this.jumpTakeOff);
+    const rate = THREE.MathUtils.clamp(air / Math.max(AIR_TIME, 0.1), 1, 1.5);
+    this.playOneShot('jump', { blendIn: 0.1, blendOut: 0.15, timeScale: rate });
+    return this.jumpTakeOff;
+  }
+
+  /** The feet are down: hand the body back to the locomotion blend. */
+  land(): void {
+    if (this.oneShot.clip === 'jump') this.oneShot.stop();
+  }
+
+  /**
+   * Point the gun arm along the camera's pitch (section 7).
+   *
+   * `amount` fades it in with the draw; `pitch` is the camera's elevation. The
+   * supplied Shooting clip holds the pistol level, and level is wrong the
+   * moment the player looks up or down -- so the elevation is added to the arm
+   * procedurally while the clip keeps the pose and the grip.
+   */
+  setAim(amount: number, pitch: number): void {
+    this.aimAmount = THREE.MathUtils.clamp(amount, 0, 1);
+    this.aimPitch = pitch;
+  }
+
   /** True when a dance clip was actually supplied. */
   get canDance(): boolean { return this.dance !== null; }
 
@@ -249,142 +306,60 @@ export class CharacterRig {
 
   update(f: CharacterFrame): void {
     const dt = Math.max(f.dt, 1e-4);
+    // Undo before the mixer, apply after it. three stops writing a bone whose
+    // mixed value has not changed -- which is every bone of a static idle pose --
+    // so without the undo the additions below compound instead of replacing.
+    this.offsets.clear();
+    this.oneShot.update(dt);
+    this.overlay.update(dt);
     this.stepWeights(f, dt);
     this.mixer.update(this.frozen ? 0 : dt);
-    this.stepFlourish(f, dt);
-    this.applyOpacity(f.opacity);
+    this.flourish.step(f, dt, this.dancing, this.aimAmount, this.aimPitch);
+    this.skins.setOpacity(f.opacity);
   }
 
   /**
-   * Target weights from the ladder, eased toward over `blend`.
+   * Hand the body out between the locomotion blend, the dance, the airborne
+   * pose and a full-body one-shot.
    *
-   * A speed sits between two rungs; both play, each at its own rate, and the
-   * blend is linear in speed between them. Below the bottom locomotion rung the
-   * idle pose takes over. Above the top one the fastest clip is pushed by
-   * timeScale until it hits the clamp.
+   * Everything but the overlay competes for the same 1.0 of weight; the overlay
+   * is additive and sits on top of whatever this produces.
    */
   private stepWeights(f: CharacterFrame, dt: number): void {
-    const targets = new Map<string, number>();
-    let scale = new Map<string, number>();
     let wantDance = 0, wantAir = 0;
+    if (this.dancing && this.dance) wantDance = 1;
+    else if (f.airborne && this.air && !this.oneShot.active) wantAir = 1;
 
-    if (this.dancing && this.dance) {
-      wantDance = 1;
-    } else if (f.airborne && this.air) {
-      wantAir = 1;
-    } else if (this.ladder.length > 0) {
-      // Bracket the speed between two rungs. No dead zone at the bottom: the
-      // ladder's own idle rung sits at 0 m/s, so a drift of 0.1 m/s already
-      // resolves to almost pure idle without a threshold to step across.
-      const speed = Math.max(0, f.speed);
-      let i = 0;
-      while (i < this.ladder.length - 1 && this.ladder[i + 1].speed <= speed) i++;
-      const lo = this.ladder[i];
-      const hi = this.ladder[Math.min(i + 1, this.ladder.length - 1)];
-      const span = hi.speed - lo.speed;
-      const t = span > 1e-3 ? THREE.MathUtils.clamp((speed - lo.speed) / span, 0, 1) : 1;
-      targets.set(lo.name, (targets.get(lo.name) ?? 0) + (1 - t));
-      targets.set(hi.name, (targets.get(hi.name) ?? 0) + t);
-      scale = this.strideScales(speed);
-    }
-
-    const rate = dt / Math.max(A.blend, 1e-3);
-    let total = 0;
-    for (const t of this.tracks) {
-      t.weight = approach(t.weight, targets.get(t.name) ?? 0, rate);
-      total += t.weight;
-    }
     // The dance gets its own crossfade times: it is a deliberate flourish, and
     // it should arrive a little slower than a gait change and leave slower
     // still, rather than snapping back to a walk the instant a key is touched.
     const danceRate = dt / (wantDance > this.danceWeight ? A.danceIn : A.danceOut);
     this.danceWeight = approach(this.danceWeight, wantDance, danceRate);
+    const rate = dt / Math.max(A.blend, 1e-3);
     this.airWeight = approach(this.airWeight, wantAir, rate);
-    total += this.danceWeight + this.airWeight;
 
+    // Anything that takes the whole body over takes it from the locomotion
+    // blend, in this order of precedence.
+    const taken = THREE.MathUtils.clamp(
+      this.danceWeight + this.airWeight + this.oneShot.weight, 0, 1,
+    );
+    const locomotion = this.locomotion.step(f.speed, dt, taken);
+
+    // Normalise against what the blend actually produced, so the total across
+    // every non-additive action stays at one and the pose never washes out.
+    const total = locomotion + this.danceWeight + this.airWeight + this.oneShot.weight;
     const norm = total > 1e-4 ? 1 / total : 0;
-    for (const t of this.tracks) {
-      t.action.setEffectiveWeight(t.weight * norm);
-      t.action.timeScale = scale.get(t.name) ?? 1;
-    }
     if (this.dance) this.dance.setEffectiveWeight(this.danceWeight * norm);
     if (this.air) this.air.setEffectiveWeight(this.airWeight * norm);
-  }
-
-  /**
-   * Playback rate per clip: one cycle must cover the ground the character
-   * actually covered, so rate = speed / the speed the clip was authored at.
-   * Clamped, because a walk stretched to 4x is a cartoon and a run slowed to a
-   * third is a moonwalk.
-   */
-  private strideScales(speed: number): Map<string, number> {
-    const out = new Map<string, number>();
-    for (const t of this.tracks) {
-      if (t.speed <= 0.05) continue;
-      out.set(t.name, THREE.MathUtils.clamp(speed / t.speed, A.timeScaleMin, A.timeScaleMax));
-    }
-    return out;
-  }
-
-  /**
-   * Everything additive, applied after the mixer has written its absolute pose.
-   *
-   * The lean is the brief's; the breath and the weight shift are standing in
-   * for the idle clip that was not supplied, and only fade in as the character
-   * comes to rest, so they never fight a walk cycle.
-   */
-  private stepFlourish(f: CharacterFrame, dt: number): void {
-    const accel = (f.speed - this.lastSpeed) / dt;
-    this.lastSpeed = f.speed;
-    const wantLean = f.airborne
-      ? -AIR_LEAN
-      : THREE.MathUtils.clamp(accel / 10, -1, 1) * LEAN_ACCEL;
-    const wantBank = THREE.MathUtils.clamp(f.turnRate / 4, -1, 1) * LEAN_TURN;
-    this.lean = smoothDamp(this.lean, wantLean, this.leanVel, F.leanSmooth, dt);
-    this.bank = smoothDamp(this.bank, wantBank, this.bankVel, F.leanSmooth, dt);
-    this.squash += (f.crouch - this.squash) * Math.min(1, dt * 26);
-
-    if (this.spine) {
-      this.spine.rotation.x += this.lean + Math.max(0, -this.squash) * 0.2;
-      this.spine.rotation.z += this.bank;
-    }
-
-    // Still-and-standing only: 1 at a dead stop, 0 by the time a walk reads.
-    const still = this.dancing ? 0 : 1 - THREE.MathUtils.clamp(f.speed / A.idleSpeed, 0, 1);
-    if (still > 0.01) {
-      if (this.chest) {
-        const breath = 1 + Math.sin(f.time * Math.PI * 2 * A.breathHz) * A.breathScale * still;
-        this.chest.scale.set(this.chestRest.x, this.chestRest.y * breath, this.chestRest.z * breath);
-      }
-      if (this.hips) {
-        const sway = Math.sin(f.time * Math.PI * 2 * A.swayHz) * SWAY * still;
-        this.hips.rotation.z += sway;
-        this.hips.position.x += sway * 0.4;
-      }
-    } else if (this.chest) {
-      this.chest.scale.copy(this.chestRest);
-    }
-  }
-
-  private applyOpacity(opacity: number): void {
-    if (Math.abs(opacity - this.opacity) < 0.001) return;
-    this.opacity = opacity;
-    const solid = opacity >= 0.999;
-    for (const m of this.materials) {
-      const std = m as THREE.MeshStandardMaterial;
-      const wasTransparent = std.transparent;
-      std.opacity = opacity;
-      std.transparent = !solid;
-      std.depthWrite = solid;
-      if (wasTransparent !== std.transparent) std.needsUpdate = true;
-    }
+    if (this.oneShot.action) this.oneShot.action.setEffectiveWeight(this.oneShot.weight * norm);
   }
 
   dispose(): void {
+    this.offsets.dispose();
     this.mixer.stopAllAction();
     this.mixer.uncacheRoot(this.root);
     this.group.removeFromParent();
-    for (const m of this.materials) m.dispose();
+    this.skins.dispose();
   }
 }
 

@@ -142,6 +142,10 @@ export function channelReport(json, bin) {
       node: name,
       rangeX: span(0), rangeY: span(1), rangeZ: span(2),
       travel: Math.hypot(netX, netZ),
+      // Which way the clip actually travels, relative to the character's own
+      // forward (+Z). This is what says a strafe goes right rather than left,
+      // and it is measured rather than guessed from the file name.
+      travelDeg: (Math.atan2(netX, netZ) * 180) / Math.PI,
       restY: data[1],
       yaw,
     };

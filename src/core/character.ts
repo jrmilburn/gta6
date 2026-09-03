@@ -13,12 +13,38 @@ import { CFG } from '../config';
 
 const A = CFG.anim;
 
+/**
+ * Clips that play while the character is standing still and being aimed by the
+ * player. Any yaw baked into these fights the controller for the facing, so it
+ * is removed (see `stripRootYaw`).
+ */
+const STANDING = /^(idle|punch|pistol)/;
+
+/**
+ * What the game does with a clip, assigned by scripts/convert-character.mjs
+ * from the file and folder name.
+ *
+ * `ladder` clips are rungs of the speed-driven locomotion blend. `dir` clips
+ * cover a direction of travel other than straight ahead -- a diagonal, a
+ * strafe, a backward jog -- and carry the angle they represent. `goofy` stands
+ * in for the whole gait on demand. `many` is a role the game picks at random
+ * from: five punches, two falls. `once` is everything triggered explicitly.
+ */
+export type ClipRole = 'ladder' | 'goofy' | 'dir' | 'many' | 'once';
+
 export interface ClipInfo {
   name: string;
+  role: ClipRole;
   duration: number;
   /** Metres per second the clip's own root motion covers. 0 for in-place clips. */
   groundSpeed: number;
   inPlace: boolean;
+  /** Net yaw baked into the hips over the clip, radians. */
+  rootYaw: number;
+  /** For a `dir` clip: the travel direction it covers, degrees off forward. */
+  angle: number;
+  /** True for clips that only play while the pistol is drawn. */
+  armed: boolean;
 }
 
 export interface CharacterSource {
@@ -32,11 +58,17 @@ export interface CharacterSource {
   albedo: THREE.Texture | null;
   /** True when the idle pose was built here rather than supplied as a clip. */
   syntheticIdle: boolean;
+  /** Every clip name carrying `role`, in manifest order. */
+  byRole(role: ClipRole): string[];
 }
 
 interface Manifest {
   hero: { file: string; height: number };
-  clips: Array<{ name: string; file: string; duration: number; groundSpeed: number; inPlace: boolean }>;
+  clips: Array<{
+    name: string; file: string; role?: ClipRole; duration: number;
+    groundSpeed: number; inPlace: boolean; rootYawDeg?: number;
+    angle?: number; armed?: boolean;
+  }>;
 }
 
 export type GltfLoad = (url: string) => Promise<{ scene: THREE.Object3D; animations: THREE.AnimationClip[] }>;
@@ -65,6 +97,11 @@ export function findBone(root: THREE.Object3D, suffix: string): THREE.Bone | nul
  * In-place clips are skipped: the dance's hips wander 1.36 m sideways and come
  * back to the mark, and that side-step *is* the dance. Only a clip with net
  * travel is trying to move the character.
+ *
+ * The falls are skipped too, by role. A knockdown is 0.74 m of the body
+ * pitching forward onto the ground, and the pedestrian's AI is stopped for the
+ * whole of it -- there is nothing for the travel to fight, and stripping it
+ * would drop the body straight down on the spot.
  */
 function stripRootMotion(clip: THREE.AnimationClip): void {
   for (const track of clip.tracks) {
@@ -72,6 +109,33 @@ function stripRootMotion(clip: THREE.AnimationClip): void {
     const v = track.values;
     const x = v[0], z = v[2];
     for (let i = 0; i < v.length; i += 3) { v[i] = x; v[i + 2] = z; }
+  }
+}
+
+/**
+ * Remove yaw baked into the hips, keeping pitch and roll.
+ *
+ * A clip that turns the body while the controller also owns the facing gives
+ * two things authority over one number, and the character twitches. Measured on
+ * the supplied set, only the falls carry any (39 degrees, which is the fall
+ * itself and is left alone) -- but the brief calls for it on the clips that
+ * play while standing, and a future download may well arrive with a drift.
+ */
+function stripRootYaw(clip: THREE.AnimationClip): void {
+  for (const track of clip.tracks) {
+    if (!/Hips\.quaternion$/.test(track.name)) continue;
+    const v = track.values;
+    for (let i = 0; i < v.length; i += 4) {
+      const x = v[i], y = v[i + 1], z = v[i + 2], w = v[i + 3];
+      const yaw = Math.atan2(2 * (w * y + x * z), 1 - 2 * (y * y + z * z));
+      // Left-multiply by the inverse yaw, which cancels the turn about world up
+      // and leaves the lean and the twist untouched.
+      const s = Math.sin(-yaw / 2), c = Math.cos(-yaw / 2);
+      v[i] = c * x + s * z;
+      v[i + 1] = c * y + s * w;
+      v[i + 2] = c * z - s * x;
+      v[i + 3] = c * w - s * y;
+    }
   }
 }
 
@@ -184,31 +248,47 @@ export async function loadCharacter(
     const clip = gltf.animations[0];
     if (!clip) continue;
     clip.name = entry.name;
-    if (!entry.inPlace) stripRootMotion(clip);
+    const role: ClipRole = entry.role ?? 'once';
+    // Root motion is stripped from everything the CONTROLLER drives, and left
+    // on everything that drives itself. A knockdown travels; a jog must not.
+    if (!entry.inPlace && role !== 'many') stripRootMotion(clip);
+    if (STANDING.test(entry.name)) stripRootYaw(clip);
     clips.set(entry.name, clip);
     info.set(entry.name, {
       name: entry.name,
+      role,
       duration: entry.duration,
       groundSpeed: entry.groundSpeed,
       inPlace: entry.inPlace,
+      rootYaw: ((entry.rootYawDeg ?? 0) * Math.PI) / 180,
+      angle: entry.angle ?? 0,
+      armed: entry.armed === true,
     });
   }
 
   // The whole point of the rig is locomotion; without a single walk-like clip
   // there is nothing here the procedural humanoid does not do better.
-  const locomotion = [...info.values()].filter((c) => c.groundSpeed > 0.05);
+  const locomotion = [...info.values()].filter((c) => c.role === 'ladder' && c.groundSpeed > 0.05);
   if (locomotion.length === 0) return null;
 
   const syntheticIdle = !clips.has('idle');
   if (syntheticIdle) {
     const base = clips.get('walk') ?? clips.get('jog') ?? clips.get([...clips.keys()][0]);
     if (base) {
-      clips.set('idle', synthesiseIdle(base));
-      info.set('idle', { name: 'idle', duration: 1, groundSpeed: 0, inPlace: true });
+      const idle = synthesiseIdle(base);
+      stripRootYaw(idle);
+      clips.set('idle', idle);
+      info.set('idle', {
+        name: 'idle', role: 'ladder', duration: 1, groundSpeed: 0, inPlace: true,
+        rootYaw: 0, angle: 0, armed: false,
+      });
     }
   }
 
-  return { scene: hero.scene, clips, info, height, albedo, syntheticIdle };
+  const byRole = (role: ClipRole): string[] =>
+    [...info.values()].filter((c) => c.role === role).map((c) => c.name);
+
+  return { scene: hero.scene, clips, info, height, albedo, syntheticIdle, byRole };
 }
 
 /**
@@ -225,6 +305,10 @@ export function buildLadder(info: Map<string, ClipInfo>): Rung[] {
   const rungs: Rung[] = [];
   if (info.has('idle')) rungs.push({ name: 'idle', speed: 0 });
   for (const c of info.values()) {
+    // Role, not speed. A fall travels 0.74 m and a jump 2.29 m, and both would
+    // otherwise land in the middle of the walk-to-jog blend as rungs of their
+    // own -- which is how a knockdown clip ends up playing when you jog.
+    if (c.role !== 'ladder' || c.name === 'idle') continue;
     if (c.groundSpeed > 0.05) rungs.push({ name: c.name, speed: c.groundSpeed });
   }
   rungs.sort((a, b) => a.speed - b.speed);
