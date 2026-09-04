@@ -145,9 +145,15 @@ export class CombatSystem implements System, CombatState {
     const pose = this.aiming ? aim : idle;
 
     // A shot in flight owns the overlay; the pose comes back when it finishes.
-    if (this.firing && !rig.overlay.running) this.firing = false;
+    const loop = pose !== 'pistolFire';
+    if (this.firing && !rig.overlay.running) {
+      this.firing = false;
+      // The frozen-frame fallback fires by letting its own clip run, so the
+      // finished shot IS the pose clip and the swap below never happens; wind
+      // it back to the top by hand.
+      if (!loop && rig.overlay.clip === pose) rig.freezeOverlay(0);
+    }
     if (!this.firing && rig.overlay.clip !== pose) {
-      const loop = pose !== 'pistolFire';
       rig.playOverlay(pose, {
         blendIn: this.poseHeld ? C.pistol.aimIn : C.pistol.drawTime * 0.6,
         blendOut: C.pistol.holsterTime,

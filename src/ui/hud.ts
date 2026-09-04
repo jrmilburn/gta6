@@ -130,6 +130,31 @@ export function createHud(uiRoot: HTMLElement, city: CityLayout): HudApi {
   'click to look around');
   modes.append(goofyTag, lookHint);
 
+  // --- lower left, above the mode row: the controls ---
+  // A key legend rather than a tutorial: two columns, key on the left, in the
+  // same corner as the mode indicators so everything about "what can I press"
+  // lives in one place, and small enough that it reads as furniture.
+  const controls = el('div', 'position:absolute; bottom:56px; left:20px; font-size:12px;'
+    + ' letter-spacing:0.08em; padding:8px 12px; border-radius:10px; background:rgba(0,0,0,0.42);'
+    + ' border:1px solid rgba(255,255,255,0.22); display:grid; grid-template-columns:auto auto;'
+    + ' column-gap:14px; row-gap:3px; align-items:baseline;');
+  const CONTROLS: ReadonlyArray<[string, string]> = [
+    ['WASD', 'move'],
+    ['SHIFT', 'sprint'],
+    ['SPACE', 'jump'],
+    ['MOUSE', 'look  ·  click punch / fire  ·  right-click aim'],
+    ['E', 'get in / out'],
+    ['H', 'gun'],
+    ['P', 'goofy walk'],
+    ['G', 'gangnam style'],
+  ];
+  for (const [key, what] of CONTROLS) {
+    controls.append(
+      el('div', 'font-weight:800; color:#ffd452; text-align:right; white-space:nowrap;', key),
+      el('div', 'font-weight:600; opacity:0.9; white-space:nowrap;', what),
+    );
+  }
+
   // --- upper centre: transient toast ---
   // Above the mission line and below the centre of frame, so it never sits over
   // the character it is announcing.
@@ -144,7 +169,7 @@ export function createHud(uiRoot: HTMLElement, city: CityLayout): HudApi {
   const minimap = createMinimap(city);
   topLeft.appendChild(minimap.canvas);
 
-  root.append(topRight, bottomRight, bottomCenter, topLeft, toastEl, cross, ammo, modes, prompt);
+  root.append(topRight, bottomRight, bottomCenter, topLeft, toastEl, cross, ammo, controls, modes, prompt);
   uiRoot.appendChild(root);
 
   let starCount = 0;

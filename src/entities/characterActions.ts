@@ -139,9 +139,17 @@ export class Layer {
   /** True while the slot has anything to show. */
   get active(): boolean { return this.action !== null && (this.weight > 0.001 || this.target > 0); }
 
-  /** True while a one-shot is still playing rather than fading out. */
+  /**
+   * True while the clip is still travelling toward its end.
+   *
+   * A held clip that has arrived is finished, even though its weight stays: a
+   * firing clip played with `hold` used to count as running for as long as it
+   * was loaded, so the stance that should replace it when the shot was over
+   * never came back and the arms stayed locked on the recoil frame -- most
+   * visibly when the player jogged off afterwards with the gun still out.
+   */
   get running(): boolean {
-    return this.action !== null && this.target > 0 && (this.holding || !this.atEnd());
+    return this.action !== null && this.target > 0 && !this.atEnd();
   }
 
   /**
