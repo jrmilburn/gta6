@@ -50,9 +50,7 @@ export interface ScreensApi {
   readonly letterboxed: boolean;
 }
 
-export interface BlipHost { blip(freq?: number): void }
-
-export function createScreens(uiRoot: HTMLElement, audio: BlipHost): ScreensApi {
+export function createScreens(uiRoot: HTMLElement): ScreensApi {
   const root = el('div', 'position:absolute; inset:0;');
   uiRoot.appendChild(root);
 
@@ -151,7 +149,6 @@ export function createScreens(uiRoot: HTMLElement, audio: BlipHost): ScreensApi 
     pulse.style.display = 'flex';
     // Next frame so the display:flex takes before the opacity transition starts.
     requestAnimationFrame(() => { pulse.style.opacity = '1'; });
-    if (kind === 'passed') audio.blip(1200);
   }
 
   return {

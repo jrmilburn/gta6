@@ -17,7 +17,6 @@ const LOOKAHEAD = 6;
 // side of the bonnet, expressed as a dot-product / cosine threshold.
 const FOLLOW_CONE_COS = Math.cos(Math.PI / 6);
 const INTERSECTION_RADIUS = CFG.city.roadWidth * 0.8;
-const HONK_INTERVAL = 2.5;
 const STEER_GAIN = 2.4;
 /**
  * Where a car starts braking for a red, metres before the end of its lane
@@ -35,7 +34,6 @@ interface AiCar {
   nextLaneId: number;  // chosen at the previous intersection, via successors()
   pausedUntil: number; // > game.time while waiting at an intersection
   blockedFor: number;  // seconds continuously stopped behind the player
-  honkedAt: number;
   wasOccupied: boolean;
 }
 
@@ -148,7 +146,7 @@ export class TrafficSystem implements System {
   private freshAi(car: Vehicle, lane: Lane, arc: number): AiCar {
     const succ = this.city.roads.successors(lane.id);
     const nextLaneId = succ.length ? succ[this.rng.int(0, succ.length - 1)].id : lane.id;
-    return { car, laneId: lane.id, arc, nextLaneId, pausedUntil: 0, blockedFor: 0, honkedAt: -99, wasOccupied: false };
+    return { car, laneId: lane.id, arc, nextLaneId, pausedUntil: 0, blockedFor: 0, wasOccupied: false };
   }
 
   /** Re-anchor an AI car onto the lane graph from wherever it physically is --
@@ -246,10 +244,6 @@ export class TrafficSystem implements System {
 
     if (blocked.byPlayer && car.speed < 0.5) {
       a.blockedFor += dt;
-      if (a.blockedFor > 2 && this.game.time - a.honkedAt > HONK_INTERVAL) {
-        this.game.audio.horn();
-        a.honkedAt = this.game.time;
-      }
     } else {
       a.blockedFor = 0;
     }

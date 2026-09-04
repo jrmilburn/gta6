@@ -48,7 +48,7 @@ sunbelt-city/
       input.ts            keyboard state, edge-triggered key presses
       rng.ts              seeded PRNG (mulberry32), seed from ?seed= URL param, default 1337
       textures.ts         canvas-drawn textures: road, windows, sidewalk, signs
-      audio.ts            Web Audio synth: engine, siren, horn, thud, ui blip
+      audio.ts            Web Audio synth: punch, gunshot, dance beat
     world/
       cityGen.ts          block/zone layout -> CityData
       roadGraph.ts        nodes, lanes, pathfinding (A*), nearest lane query

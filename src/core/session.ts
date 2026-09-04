@@ -273,14 +273,7 @@ export function createSession(game: Game, assets: Assets, screens?: ScreensApi):
   // The driver only feeds input to a vehicle while the player occupies it;
   // parked cars keep stepping their own physics via the loop below.
   game.add({
-    update: (dt) => {
-      if (current) { driver.update(dt); return; }
-      // On foot the driver stops updating, and the engine's gain node was being
-      // left approaching whatever target the last frame of driving set -- a
-      // 60 Hz saw over a 30 Hz sub, held at a tenth of full gain forever. That
-      // was the hum. Silence has to be asked for; it is not the default.
-      game.audio.engine(0, 0, false);
-    },
+    update: (dt) => { if (current) driver.update(dt); },
   });
   for (const v of vehicles) game.add(v);
   // System order (plan section 1.1): input -> player -> vehicles -> traffic

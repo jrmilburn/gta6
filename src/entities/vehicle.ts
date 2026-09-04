@@ -43,7 +43,6 @@ export interface VehicleHost {
   /** Optional: enables the distance-based detail drop in renderSync. */
   camera?: { position: THREE.Vector3 };
   events: { emit(evt: EventName, payload?: unknown): void };
-  audio: { thud(impact: number): void };
   time: number;
 }
 
@@ -336,7 +335,6 @@ export class Vehicle implements VehicleState, System, Renderable {
 
   private onImpact(impact: number, other: Vehicle | null): void {
     if (impact < IMPACT_FLOOR) return;
-    this.host.audio.thud(impact);
     const payload: VehicleHitPayload = { vehicle: this, other, impact, x: this.pos.x, z: this.pos.z };
     this.host.events.emit('vehicleHit', payload);
     this.damage(impact * DAMAGE_PER_IMPACT);
@@ -375,7 +373,7 @@ export class Vehicle implements VehicleState, System, Renderable {
 }
 
 /**
- * Routes keyboard input into one vehicle and drives the engine audio.
+ * Routes keyboard input into one vehicle.
  *
  * This is where raw key state becomes a continuous control signal (1.2 / 1.4):
  * the throttle ramps in over 0.3 s so pulling away is a squeeze rather than a
@@ -388,7 +386,6 @@ export class PlayerDriver implements System {
   constructor(
     private readonly game: {
       input: { steerAxis: number; throttleAxis: number; isDown(a: 'handbrake'): boolean };
-      audio: { engine(speedFrac: number, throttle: number, active: boolean): void };
     },
     public vehicle: Vehicle,
   ) {}
@@ -401,7 +398,6 @@ export class PlayerDriver implements System {
     c.throttle = throttle;
     c.steer = steer;
     c.handbrake = !v.wrecked && this.game.input.isDown('handbrake');
-    this.game.audio.engine(v.speedFrac, Math.max(0, throttle), !v.wrecked);
   }
 
   /** Drop the ramp state so stepping into a new car does not inherit the old one. */

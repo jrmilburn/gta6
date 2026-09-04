@@ -62,7 +62,7 @@ export function createUi(game: Game, session: Session, existingScreens?: Screens
   if (!uiRoot) throw new Error('#ui overlay root missing');
 
   const hud = createHud(uiRoot, session.city);
-  const screens = existingScreens ?? createScreens(uiRoot, game.audio);
+  const screens = existingScreens ?? createScreens(uiRoot);
 
   let hudVisible = param('nohud') !== '1';
   hud.setVisible(hudVisible);
@@ -95,7 +95,6 @@ export function createUi(game: Game, session: Session, existingScreens?: Screens
   game.events.on('missionFailed', () => {
     hud.setMission(null);
     hud.setTimer(null);
-    game.audio.blip(220);
   });
   game.events.on('busted', () => screens.showBusted());
   game.events.on('wrecked', (payload) => {

@@ -57,7 +57,7 @@ async function boot(): Promise<void> {
 
   const uiRoot = document.getElementById('ui');
   if (!uiRoot) throw new Error('#ui overlay root missing');
-  const screens = createScreens(uiRoot, game.audio);
+  const screens = createScreens(uiRoot);
   screens.showTitle();
 
   // The game must not start before the assets are ready: the title card owns

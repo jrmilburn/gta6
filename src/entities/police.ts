@@ -363,16 +363,6 @@ export class PoliceSystem implements System {
     if (nearestHold >= P.bustSeconds && !this.busting) this.bust();
 
     this.helicopter.update(dt, me, this.deps.player.y);
-    const heli = this.helicopter.active ? Math.hypot(this.helicopter.position.x - me.x, this.helicopter.position.z - me.z) : Infinity;
-    this.game.audio.rotor(heli);
-
-    // The siren: as loud as the nearest unit with its lights on.
-    let nearest = Infinity;
-    for (const u of this.units) {
-      if (!u.car.sirenOn) continue;
-      nearest = Math.min(nearest, Math.hypot(u.car.pos.x - me.x, u.car.pos.z - me.z));
-    }
-    this.game.audio.siren(nearest, dt);
   }
 
   // --- patrol: drive like traffic --------------------------------------------------------
