@@ -185,7 +185,7 @@ export class CharacterRig {
     out.dance = { weight: +this.danceWeight.toFixed(3), timeScale: 1 };
     out.air = { weight: +this.airWeight.toFixed(3), timeScale: 1 };
     out.oneShot = { weight: +this.oneShot.weight.toFixed(3), timeScale: 1 };
-    out.overlay = { weight: +this.overlay.weight.toFixed(3), timeScale: 1 };
+    out.overlay = { weight: +(this.overlay.weight * this.overlay.scale).toFixed(3), timeScale: 1 };
     return out;
   }
 
@@ -326,6 +326,10 @@ export class CharacterRig {
     // so without the undo the additions below compound instead of replacing.
     this.offsets.clear();
     this.oneShot.update(dt);
+    // The armed movement clips already hold the gun up; the overlay only has
+    // the whole arm to add where the ordinary gait is underneath it. Last
+    // frame's share, which is a frame stale and eased anyway.
+    this.overlay.scale = 1 - this.locomotion.armedShare;
     this.overlay.update(dt);
     this.stepWeights(f, dt);
     this.mixer.update(this.frozen ? 0 : dt);

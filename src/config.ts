@@ -318,6 +318,12 @@ export const CFG = {
       holsterTime: 0.3,
       /** Minimum seconds between shots. */
       fireInterval: 0.2,
+      /**
+       * How far through the firing clip, 0..1, the stance may take the arms
+       * back when the player is not aiming. The recoil is over by a third; the
+       * rest is the clip settling back into a sight picture nobody is holding.
+       */
+      fireHandBack: 0.35,
       range: 120,
       vehicleDamage: 15,
       /** Over-the-shoulder aim camera. */

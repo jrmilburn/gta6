@@ -181,6 +181,23 @@ export class Locomotion {
   }
 
   /**
+   * How much of the blend the armed movement clips are carrying, 0..1.
+   *
+   * Those clips -- Pistol Run, the aimed strafes and back-steps -- were authored
+   * with the gun already held up, so whatever the pistol overlay would add on
+   * top of them is added twice: arms raised over the head, and the stance's
+   * spine lean stacked onto the run's own forward pitch. The rig scales the
+   * overlay down by this share so the clips that already hold the gun are left
+   * to hold it.
+   */
+  get armedShare(): number {
+    let armed = 0, total = 0;
+    for (const t of this.all()) total += t.weight;
+    for (const d of this.directions) if (d.armed) armed += d.weight;
+    return total > 1e-4 ? THREE.MathUtils.clamp(armed / total, 0, 1) : 0;
+  }
+
+  /**
    * Ease every weight toward what `speed` and `moveAngle` ask for, and return
    * the total for the rig to normalise against whatever else is playing.
    *

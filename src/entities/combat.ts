@@ -145,8 +145,16 @@ export class CombatSystem implements System, CombatState {
     const pose = this.aiming ? aim : idle;
 
     // A shot in flight owns the overlay; the pose comes back when it finishes.
+    //
+    // Or sooner. The Shooting clip is 1.17 s of recoil and settle back into the
+    // sight picture, which is right when the player is aiming and has nowhere
+    // else to be. Fired from the hip -- not aiming, jogging off -- holding a
+    // two-handed aim over running legs for over a second looked broken, so
+    // once the recoil has played the stance takes the arms back early.
     const loop = pose !== 'pistolFire';
-    if (this.firing && !rig.overlay.running) {
+    const recoilDone = !this.aiming && rig.overlay.clip === 'pistolFire'
+      && rig.overlay.progress >= C.pistol.fireHandBack;
+    if (this.firing && (!rig.overlay.running || recoilDone)) {
       this.firing = false;
       // The frozen-frame fallback fires by letting its own clip run, so the
       // finished shot IS the pose clip and the swap below never happens; wind
