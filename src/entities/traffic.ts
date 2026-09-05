@@ -8,16 +8,17 @@ import { Rng } from '../core/rng';
 import type { CityLayout } from '../world/cityGen';
 import type { SignalSystem } from '../world/signals';
 import { Vehicle } from './vehicle';
+import { TrafficFlow } from './trafficFlow';
 
 const KINDS: VehicleKind[] = ['sedan', 'sports', 'pickup'];
 const MIN_SPAWN_DIST = 60;
 const RECYCLE_DIST = 250;
 const LOOKAHEAD = 6;
-// "within followGap ahead in a 30 degree cone": half-angle 15 degrees either
-// side of the bonnet, expressed as a dot-product / cosine threshold.
-const FOLLOW_CONE_COS = Math.cos(Math.PI / 6);
-const INTERSECTION_RADIUS = CFG.city.roadWidth * 0.8;
 const STEER_GAIN = 2.4;
+/** Stopped with the throttle down this long, and nothing to wait for: stuck. */
+const STUCK_AFTER = 1.5;
+const REVERSE_FOR = 0.8;
+const THREE_CLAMP = (v: number, lo: number, hi: number): number => Math.max(lo, Math.min(hi, v));
 /**
  * Where a car starts braking for a red, metres before the end of its lane
  * (the lane ends at the kerb line of the intersection, which is the stop
@@ -32,8 +33,9 @@ interface AiCar {
   laneId: number;
   arc: number;         // metres travelled along the current lane
   nextLaneId: number;  // chosen at the previous intersection, via successors()
-  pausedUntil: number; // > game.time while waiting at an intersection
   blockedFor: number;  // seconds continuously stopped behind the player
+  stuckFor: number;    // seconds stopped with the throttle down and nothing to wait for
+  reverseUntil: number; // > game.time while backing out of whatever it is stuck on
   wasOccupied: boolean;
 }
 
@@ -75,6 +77,7 @@ export class TrafficSystem implements System {
   readonly cars: Vehicle[] = [];
   private readonly ai: AiCar[] = [];
   private readonly rng: Rng;
+  private readonly flow: TrafficFlow;
   private signals: SignalSystem | null = null;
 
   constructor(
@@ -85,6 +88,7 @@ export class TrafficSystem implements System {
     seed = 90210,
   ) {
     this.rng = new Rng(seed);
+    this.flow = new TrafficFlow(city);
     for (let i = 0; i < CFG.traffic.count; i++) this.spawnOne(i);
   }
 
@@ -146,7 +150,7 @@ export class TrafficSystem implements System {
   private freshAi(car: Vehicle, lane: Lane, arc: number): AiCar {
     const succ = this.city.roads.successors(lane.id);
     const nextLaneId = succ.length ? succ[this.rng.int(0, succ.length - 1)].id : lane.id;
-    return { car, laneId: lane.id, arc, nextLaneId, pausedUntil: 0, blockedFor: 0, wasOccupied: false };
+    return { car, laneId: lane.id, arc, nextLaneId, blockedFor: 0, stuckFor: 0, reverseUntil: 0, wasOccupied: false };
   }
 
   /** Re-anchor an AI car onto the lane graph from wherever it physically is --
@@ -156,7 +160,7 @@ export class TrafficSystem implements System {
     const { lane, t } = this.city.roads.nearestLane(a.car.pos);
     const fresh = this.freshAi(a.car, lane, t * lane.length);
     a.laneId = fresh.laneId; a.arc = fresh.arc; a.nextLaneId = fresh.nextLaneId;
-    a.pausedUntil = 0; a.blockedFor = 0;
+    a.blockedFor = 0; a.stuckFor = 0; a.reverseUntil = 0;
   }
 
   private respawnNearPlayer(a: AiCar): void {
@@ -168,12 +172,13 @@ export class TrafficSystem implements System {
     a.car.reset(p.x, p.z, headingAlong(lane, arc));
     const fresh = this.freshAi(a.car, lane, arc);
     a.laneId = fresh.laneId; a.arc = fresh.arc; a.nextLaneId = fresh.nextLaneId;
-    a.pausedUntil = 0; a.blockedFor = 0;
+    a.blockedFor = 0; a.stuckFor = 0; a.reverseUntil = 0;
   }
 
   update(_dt: number): void {
     const playerVehicle = this.getPlayerVehicle();
     const player = this.playerPos();
+    this.flow.begin(this.ai, playerVehicle, this.game.time);
     for (const a of this.ai) {
       const car = a.car;
       // Stolen: the player is driving this car now, so PlayerDriver owns its
@@ -193,22 +198,32 @@ export class TrafficSystem implements System {
     const car = a.car;
     const roads = this.city.roads;
     let lane = roads.lanes[a.laneId];
+    const now = this.game.time;
 
     car.controls.handbrake = false;
+    // Backing out of whatever it is stuck on, wheel turned; then a fresh anchor.
+    if (now < a.reverseUntil) {
+      car.controls.throttle = -1;
+      car.controls.steer = 0.6;
+      if (now + dt >= a.reverseUntil) this.resync(a);
+      return;
+    }
+
     a.arc += Math.max(0, car.speed) * dt;
-    // Held at the line: the arc stops at the lane end, so the car cannot creep
-    // through the light on the brake's last half metre per second.
-    if (a.arc >= lane.length && this.heldBySignal({ ...a, arc: lane.length - 0.01 }, lane)) {
-      a.arc = lane.length - 0.01;
+    // Held at the line -- by a red, or by somebody already in the box -- the arc
+    // stops at the lane end, so the car cannot creep through on the brake's
+    // last half metre per second.
+    let waiting = false;
+    if (a.arc >= lane.length) {
+      const atLine = { ...a, arc: lane.length - 0.01 };
+      if (this.heldBySignal(atLine, lane) || !this.flow.mayEnter(a, now)) {
+        a.arc = lane.length - 0.01;
+        waiting = true;
+      }
     }
     let guard = 0;
     while (a.arc >= lane.length && guard++ < 4) {
       a.arc -= lane.length;
-      const enteringNode = laneNodeId(roads.lanes[a.nextLaneId]);
-      if (enteringNode !== null && this.game.time >= a.pausedUntil
-        && this.intersectionBusy(enteringNode, car, playerVehicle)) {
-        a.pausedUntil = this.game.time + CFG.traffic.intersectionPause;
-      }
       a.laneId = a.nextLaneId;
       lane = roads.lanes[a.laneId];
       const succ = roads.successors(a.laneId);
@@ -222,19 +237,19 @@ export class TrafficSystem implements System {
     const angle = Math.atan2(localX, Math.max(0.01, localZ));
     let steer = Math.max(-1, Math.min(1, angle * STEER_GAIN));
 
-    const paused = this.game.time < a.pausedUntil;
-    const blocked = this.blockedAhead(a, playerVehicle);
-    const held = this.heldBySignal(a, lane);
+    // How fast to go: the cruise, or whatever the cars around dictate, or
+    // nothing at all while waiting at a line.
+    const target = waiting || this.heldBySignal(a, lane)
+      ? 0
+      : this.flow.targetSpeed(a, this.ai, playerVehicle, CFG.traffic.cruiseSpeed);
     let throttle: number;
-    if (paused || blocked.blocked || held) {
+    if (target <= 0.05) {
       throttle = car.speed > 0.3 ? -1 : 0;
       steer *= 0.2;
-    } else if (car.speed < CFG.traffic.cruiseSpeed) {
-      throttle = 1;
-    } else if (car.speed > CFG.traffic.cruiseSpeed + 1) {
-      throttle = -0.4;
     } else {
-      throttle = 0.15;
+      // Eased toward the target rather than bang-bang, so a queue does not
+      // concertina: full throttle only when well under, gentle brake when over.
+      throttle = THREE_CLAMP((target - car.speed) * 0.5, -0.6, 1);
     }
     car.controls.throttle = throttle;
     // `angle` is positive toward +X and `controls.steer` is positive to the
@@ -242,10 +257,19 @@ export class TrafficSystem implements System {
     // pointing at its target rather than away from it.
     car.controls.steer = -steer;
 
-    if (blocked.byPlayer && car.speed < 0.5) {
-      a.blockedFor += dt;
-    } else {
-      a.blockedFor = 0;
+    // Stopped behind the player: counted for the horn and the wanted system.
+    const byPlayer = playerVehicle !== null && target <= 0.05 && car.speed < 0.5
+      && Math.hypot(playerVehicle.pos.x - car.pos.x, playerVehicle.pos.z - car.pos.z) < CFG.traffic.followGap + 2;
+    a.blockedFor = byPlayer ? a.blockedFor + dt : 0;
+
+    // Stuck: throttle down, not moving, nothing in the way that the model knows
+    // about. A car nosed into a kerb or another car's flank does this; a short
+    // reverse and a fresh anchor gets it going again.
+    const stuck = throttle > 0.5 && car.speed < 0.3 && !waiting;
+    a.stuckFor = stuck ? a.stuckFor + dt : 0;
+    if (a.stuckFor > STUCK_AFTER) {
+      a.stuckFor = 0;
+      a.reverseUntil = now + REVERSE_FOR;
     }
   }
 
@@ -253,36 +277,5 @@ export class TrafficSystem implements System {
     const target = arc + LOOKAHEAD;
     if (target <= lane.length) return pointAtArc(lane, target);
     return pointAtArc(this.city.roads.lanes[nextLaneId], target - lane.length);
-  }
-
-  private intersectionBusy(nodeId: number, self: Vehicle, playerVehicle: Vehicle | null): boolean {
-    const node = this.city.roads.nodes[nodeId];
-    for (const other of this.ai) {
-      if (other.car === self) continue;
-      if (Math.hypot(other.car.pos.x - node.pos.x, other.car.pos.z - node.pos.z) < INTERSECTION_RADIUS) return true;
-    }
-    if (playerVehicle && Math.hypot(playerVehicle.pos.x - node.pos.x, playerVehicle.pos.z - node.pos.z) < INTERSECTION_RADIUS) {
-      return true;
-    }
-    return false;
-  }
-
-  private blockedAhead(a: AiCar, playerVehicle: Vehicle | null): { blocked: boolean; byPlayer: boolean } {
-    const car = a.car;
-    const gap = CFG.traffic.followGap;
-    let blocked = false, byPlayer = false;
-    const check = (other: Vehicle): void => {
-      if (other === car || other.wrecked) return;
-      const dx = other.pos.x - car.pos.x, dz = other.pos.z - car.pos.z;
-      const dist = Math.hypot(dx, dz);
-      if (dist > gap || dist < 0.01) return;
-      const forward = (dx * car.forwardX + dz * car.forwardZ) / dist;
-      if (forward < FOLLOW_CONE_COS) return; // outside the 30 degree cone ahead
-      blocked = true;
-      if (other === playerVehicle) byPlayer = true;
-    };
-    for (const other of this.ai) check(other.car);
-    if (playerVehicle) check(playerVehicle);
-    return { blocked, byPlayer };
   }
 }
