@@ -198,43 +198,87 @@ export function buildPaletteMaterials(
  * Returns one geometry per source primitive, in the same order, already
  * flattened into the character's own space with the feet at y = 0.
  */
-export interface BakedPart { geometry: THREE.BufferGeometry; material: string }
+export interface BakedPart {
+  /**
+   * Frame 0 of the walk as the base positions, and the other `WALK_FRAMES - 1`
+   * frames as absolute morph targets, so an InstancedMesh can show every
+   * pedestrian at its own point in the stride from one draw call.
+   */
+  geometry: THREE.BufferGeometry;
+  material: string;
+}
 
+/** How many frames of the walk cycle the far crowd is baked at. */
+export const WALK_FRAMES = 8;
+
+/**
+ * Bake the walk cycle onto the character at `WALK_FRAMES` evenly spaced
+ * moments, welded down to something instanceable.
+ *
+ * One baked frame was a crowd of statues; eight, blended two at a time by the
+ * renderer, is a crowd that walks. The clustering map is computed once, on
+ * frame 0, and applied to every frame, so the morph targets line up vertex for
+ * vertex -- welding each frame on its own would pick different survivors.
+ */
 export function bakeStaticPose(source: CharacterSource): BakedPart[] {
   const clip = source.clips.get('walk') ?? source.clips.get('jog');
   const root = source.scene;
-  if (clip) {
-    const mixer = new THREE.AnimationMixer(root);
-    const action = mixer.clipAction(clip);
-    action.play();
-    action.setEffectiveWeight(1);
-    // A quarter through the cycle: one leg forward, one back, arms opposed --
-    // the frame that reads as "walking" when nothing is moving.
-    action.time = clip.duration * 0.25;
-    mixer.update(0);
-    mixer.uncacheRoot(root);
-  }
-  root.updateMatrixWorld(true);
-  const inverse = new THREE.Matrix4().copy(root.matrixWorld).invert();
+  const meshes: THREE.SkinnedMesh[] = [];
+  root.traverse((o) => { if ((o as THREE.SkinnedMesh).isSkinnedMesh) meshes.push(o as THREE.SkinnedMesh); });
+
+  const mixer = clip ? new THREE.AnimationMixer(root) : null;
+  const action = mixer && clip ? mixer.clipAction(clip) : null;
+  if (action) { action.play(); action.setEffectiveWeight(1); }
+
+  /** Every mesh's skinned positions at `t`, in the root's frame. */
+  const poseAt = (t: number): Float32Array[] => {
+    if (action && mixer && clip) { action.time = t; mixer.update(0); }
+    root.updateMatrixWorld(true);
+    const inverse = new THREE.Matrix4().copy(root.matrixWorld).invert();
+    const v = new THREE.Vector3();
+    return meshes.map((mesh) => {
+      const src = mesh.geometry.getAttribute('position');
+      const local = new THREE.Matrix4().multiplyMatrices(inverse, mesh.matrixWorld);
+      const posed = new Float32Array(src.count * 3);
+      for (let i = 0; i < src.count; i++) {
+        v.fromBufferAttribute(src, i);
+        mesh.applyBoneTransform(i, v);
+        v.applyMatrix4(local);
+        posed[i * 3] = v.x; posed[i * 3 + 1] = v.y; posed[i * 3 + 2] = v.z;
+      }
+      return posed;
+    });
+  };
+
+  const frames = clip ? WALK_FRAMES : 1;
+  const duration = clip?.duration ?? 1;
+  const posed: Float32Array[][] = [];
+  for (let f = 0; f < frames; f++) posed.push(poseAt((f / frames) * duration));
+  if (mixer) { action?.stop(); mixer.uncacheRoot(root); }
 
   const out: BakedPart[] = [];
-  const v = new THREE.Vector3();
-  root.traverse((o) => {
-    const mesh = o as THREE.SkinnedMesh;
-    if (!mesh.isSkinnedMesh) return;
-    const src = mesh.geometry.getAttribute('position');
+  meshes.forEach((mesh, m) => {
     const uv = mesh.geometry.getAttribute('uv');
     const index = mesh.geometry.getIndex();
-    const local = new THREE.Matrix4().multiplyMatrices(inverse, mesh.matrixWorld);
-    const posed = new Float32Array(src.count * 3);
-    for (let i = 0; i < src.count; i++) {
-      v.fromBufferAttribute(src, i);
-      mesh.applyBoneTransform(i, v);
-      v.applyMatrix4(local);
-      posed[i * 3] = v.x; posed[i * 3 + 1] = v.y; posed[i * 3 + 2] = v.z;
+    const { geometry, picks } = cluster(posed[0][m], uv, index);
+    const targets: THREE.BufferAttribute[] = [];
+    for (let f = 1; f < frames; f++) {
+      const p = posed[f][m];
+      const arr = new Float32Array(picks.length * 3);
+      for (let i = 0; i < picks.length; i++) {
+        const j = picks[i] * 3;
+        arr[i * 3] = p[j]; arr[i * 3 + 1] = p[j + 1]; arr[i * 3 + 2] = p[j + 2];
+      }
+      const attr = new THREE.Float32BufferAttribute(arr, 3);
+      attr.name = 'walk' + f;
+      targets.push(attr);
+    }
+    if (targets.length > 0) {
+      geometry.morphAttributes.position = targets;
+      geometry.morphTargetsRelative = false;
     }
     const mat = Array.isArray(mesh.material) ? mesh.material[0] : mesh.material;
-    out.push({ geometry: cluster(posed, uv, index), material: mat.name });
+    out.push({ geometry, material: mat.name });
   });
   return out;
 }
@@ -250,12 +294,14 @@ export function bakeStaticPose(source: CharacterSource): BakedPart[] {
 function cluster(
   positions: Float32Array, uv: THREE.BufferAttribute | THREE.InterleavedBufferAttribute | null,
   index: THREE.BufferAttribute | null,
-): THREE.BufferGeometry {
+): { geometry: THREE.BufferGeometry; picks: Int32Array } {
   const cell = A.staticCluster;
   const key = new Map<string, number>();
   const remap = new Int32Array(positions.length / 3);
   const outPos: number[] = [];
   const outUv: number[] = [];
+  /** Which source vertex each surviving vertex came from, for the other frames. */
+  const picksList: number[] = [];
   for (let i = 0; i < remap.length; i++) {
     const k = `${Math.round(positions[i * 3] / cell)},`
       + `${Math.round(positions[i * 3 + 1] / cell)},`
@@ -265,6 +311,7 @@ function cluster(
     const next = outPos.length / 3;
     key.set(k, next);
     remap[i] = next;
+    picksList.push(i);
     outPos.push(positions[i * 3], positions[i * 3 + 1], positions[i * 3 + 2]);
     outUv.push(uv ? uv.getX(i) : 0, uv ? uv.getY(i) : 0);
   }
@@ -286,5 +333,5 @@ function cluster(
   geo.setIndex(tris);
   geo.computeVertexNormals();
   geo.computeBoundingSphere();
-  return geo;
+  return { geometry: geo, picks: Int32Array.from(picksList) };
 }

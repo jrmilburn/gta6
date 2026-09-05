@@ -75,6 +75,13 @@ export class Vehicle implements VehicleState, System, Renderable {
   health = 100;
   occupied = false;
   wrecked = false;
+  /** Blown up: scorched, smoking hard, and beyond any further blast. */
+  exploded = false;
+  /** Seconds until a scheduled explosion; negative when none is due. */
+  private fuse = -1;
+  /** The hop an explosion gives the body, metres above the ground, and its rate. */
+  private hopY = 0;
+  private hopVel = 0;
 
   /** Lateral momentum the tyres have not yet scrubbed off. */
   readonly slipVel: Vec2 = { x: 0, z: 0 };
@@ -142,6 +149,10 @@ export class Vehicle implements VehicleState, System, Renderable {
 
   /** Teleport and zero all momentum (respawn, tests, mission setup). */
   reset(x: number, z: number, heading = 0, health = 100): void {
+    this.exploded = false;
+    this.fuse = -1;
+    this.hopY = 0; this.hopVel = 0;
+    this.mesh.setScorched(false);
     this.pos.x = x; this.pos.z = z;
     this.heading = heading;
     this.speed = 0; this.steer = 0;
@@ -178,7 +189,17 @@ export class Vehicle implements VehicleState, System, Renderable {
     this.resolvePeers();
     this.longAccel = (this.speed - prevSpeed) / dt;
 
-    const rate = this.wrecked ? 14 : this.health < SMOKE_HEALTH ? 4 + (SMOKE_HEALTH - this.health) * 0.2 : 0;
+    if (this.fuse >= 0) {
+      this.fuse -= dt;
+      if (this.fuse < 0) this.detonate();
+    }
+    if (this.hopY > 0 || this.hopVel > 0) {
+      this.hopVel -= 22 * dt;
+      this.hopY = Math.max(0, this.hopY + this.hopVel * dt);
+      if (this.hopY === 0) this.hopVel = 0;
+    }
+
+    const rate = this.exploded ? 26 : this.wrecked ? 14 : this.health < SMOKE_HEALTH ? 4 + (SMOKE_HEALTH - this.health) * 0.2 : 0;
     this.smoke.update(dt, rate, this.pos.x + this.forwardX * 1.5, 0.95, this.pos.z + this.forwardZ * 1.5, this.wrecked);
   }
 
@@ -351,18 +372,51 @@ export class Vehicle implements VehicleState, System, Renderable {
     this.slipVel.z += z;
   }
 
-  damage(amount: number): void {
+  damage(amount: number, gunfire = false): void {
     if (this.wrecked) return;
     this.health = Math.max(0, this.health - amount);
     if (this.health > 0) return;
+    // DECISION: a car destroyed by a collision smokes and stops, as it always
+    // has; a car finished off by gunfire goes up. Crashes are the arcade's
+    // bread and butter and a fireball at every fender-bender would cheapen
+    // the one the rocket earns.
+    if (gunfire) { this.detonate(); return; }
     this.wrecked = true;
     this.controls.throttle = 0;
     this.controls.steer = 0;
     this.host.events.emit('wrecked', { vehicle: this });
   }
 
+  /** Blow up, now or in `delay` seconds. A car already gone stays gone. */
+  explode(delay = 0): void {
+    if (this.exploded) return;
+    if (delay <= 0) { this.detonate(); return; }
+    if (this.fuse < 0 || delay < this.fuse) this.fuse = delay;
+  }
+
+  private detonate(): void {
+    if (this.exploded) return;
+    this.fuse = -1;
+    this.exploded = true;
+    this.health = 0;
+    const wasWrecked = this.wrecked;
+    this.wrecked = true;
+    this.controls.throttle = 0;
+    this.controls.steer = 0;
+    this.mesh.setScorched();
+    // The body jumps and comes down where it was; the sideways kick is small
+    // and random, so a row of cars does not all hop the same way.
+    this.hopVel = 6;
+    this.slipVel.x += (Math.random() - 0.5) * 3;
+    this.slipVel.z += (Math.random() - 0.5) * 3;
+    if (!wasWrecked) this.host.events.emit('wrecked', { vehicle: this });
+    this.host.events.emit('exploded', {
+      vehicle: this, x: this.pos.x, z: this.pos.z, y: this.y + 0.8, police: this.kind === 'police',
+    });
+  }
+
   private writeMesh(x: number, y: number, z: number, heading: number): void {
-    this.group.position.set(x, y, z);
+    this.group.position.set(x, y + this.hopY, z);
     this.group.rotation.y = heading;
   }
 

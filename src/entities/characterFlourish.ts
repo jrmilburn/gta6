@@ -28,6 +28,12 @@ export class Flourish {
   /** 0..1 blend into the held pose, so it arrives over a few frames. */
   private poseAmount = 0;
   private pose: 'swim' | 'sit' | 'lean' | 'ride' | null = null;
+  /**
+   * True when the rig has a seated clip. The sit and ride poses are then the
+   * clip's business and the hand-posed legs below stay out of it -- they were
+   * the wrong sign on the thigh anyway and folded the legs behind the body.
+   */
+  poseFromClip = false;
   private readonly rightArm: THREE.Bone | null;
   private readonly rightForeArm: THREE.Bone | null;
   private readonly chestRest = new THREE.Vector3(1, 1, 1);
@@ -61,7 +67,8 @@ export class Flourish {
    * top of the idle, blended in over a quarter of a second.
    */
   private stepPose(f: CharacterFrame, dt: number): void {
-    const want = f.pose ?? null;
+    let want = f.pose ?? null;
+    if (this.poseFromClip && (want === 'sit' || want === 'ride')) want = null;
     if (want !== this.pose) {
       // Switching directly between two poses passes through the standing pose,
       // which is what a person does too.

@@ -229,7 +229,7 @@ export class Locomotion {
     const s = Math.max(0, speed);
     for (const t of all) {
       t.action.setEffectiveWeight(t.weight * norm);
-      t.action.timeScale = rateFor(s, t.speed);
+      t.action.timeScale = rateFor(s, t.speed, this.substitutes.includes(t as Substitute) ? A.goofyTimeScaleMax : A.timeScaleMax);
     }
     return total * norm;
   }
@@ -364,7 +364,7 @@ export class Locomotion {
  * speed divided by the speed the clip was authored at. Clamped, because a walk
  * stretched fourfold is a cartoon and a run at a third is a moonwalk.
  */
-function rateFor(speed: number, authored: number): number {
+function rateFor(speed: number, authored: number, max = A.timeScaleMax): number {
   if (authored <= 0.05) return 1;
-  return THREE.MathUtils.clamp(speed / authored, A.timeScaleMin, A.timeScaleMax);
+  return THREE.MathUtils.clamp(speed / authored, A.timeScaleMin, max);
 }

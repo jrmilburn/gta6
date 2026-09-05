@@ -12,6 +12,7 @@
 import * as THREE from 'three';
 import type { AABB, EventName, System, Vec2 } from '../types';
 import { CFG } from '../config';
+import { DECK } from '../world/groundHeight';
 import { Rng } from '../core/rng';
 import { blockBounds, HALF_X, HALF_Z, PIER, PITCH } from '../world/cityGen';
 import { PED_SCALES } from './pedMesh';
@@ -426,7 +427,15 @@ export class PedestrianSystem implements System {
       // neither asked the world whether there was a wall there.
       if (p.mode === 'flee' || p.mode === 'tumble' || p.mode === 'down') this.pushOut(p);
 
-      if (p.mode !== 'tumble' && p.mode !== 'ride') p.y = this.groundAt(p.pos.x, p.pos.z);
+      if (p.mode !== 'tumble' && p.mode !== 'ride') {
+        // Nobody swims. The pier block's perimeter path runs out over the
+        // water either side of the deck, and the sampler answers "sea floor"
+        // there; a pedestrian knocked down on that stretch used to lie 1.65 m
+        // under the surface. The deck is the honest height for anyone the
+        // sampler puts in the water.
+        const g = this.groundAt(p.pos.x, p.pos.z);
+        p.y = g < 0 ? DECK : g;
+      }
       this.turnHeading(p, dt);
       p.turnRate = dt > 0 ? wrapAngle(p.heading - prevHeading) / dt : 0;
       this.updatePose(p, dt);

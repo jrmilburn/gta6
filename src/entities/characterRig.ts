@@ -16,7 +16,7 @@ import { CFG } from '../config';
 import type { CharacterSource } from '../core/character';
 import { BoneOffsets } from './boneOffsets';
 import { Locomotion } from './characterLocomotion';
-import { Layer, measureImpact, measureTakeOff, upperBodyAdditive } from './characterActions';
+import { Layer, measureHipsHeight, measureImpact, measureTakeOff, upperBodyAdditive } from './characterActions';
 import { RigMaterials } from './characterMaterials';
 import { Flourish } from './characterFlourish';
 
@@ -30,8 +30,15 @@ const HEIGHT_MIN = 1.75, HEIGHT_MAX = 1.85, HEIGHT_TARGET = 1.8;
  * tuned and the clip is not.
  */
 const AIR_TIME = 2 * Math.sqrt((2 * 1.2) / 22) + CFG.feel.foot.hangTime;
-/** How far the hips come down onto a bench, metres. */
+/** How far the hips come down onto a bench, metres -- the fallback when no sit clip was supplied. */
 const SIT_DROP = 0.42;
+/**
+ * Height of every seat in the game above the ground the sitter stands on: the
+ * pier benches and the gondola bench are both built to it (src/world/pier.ts).
+ * The sit clip's own hips height is measured against it, and the root is
+ * shifted by the difference so the hips land on the plank.
+ */
+export const SEAT_HEIGHT = 0.5;
 
 export interface CharacterFrame {
   dt: number;
@@ -91,6 +98,8 @@ export class CharacterRig {
   /** Which jump clip is in the air, so land() stops the right one. */
   private airborneClip = 'jump';
   private aimPitch = 0;
+  /** Hips height in the sit clip's first frame, metres; 0 without a clip. */
+  readonly sitHips: number;
   private aimAmount = 0;
   private danceWeight = 0;
   private airWeight = 0;
@@ -133,6 +142,11 @@ export class CharacterRig {
     }
 
     this.flourish = new Flourish(this.root, this.offsets);
+    // A supplied seated clip replaces the flourish's hand-posed legs. Its hips
+    // height is read straight off the clip so the seat can be met exactly.
+    const sit = this.source.clips.get('sit');
+    this.sitHips = sit ? measureHipsHeight(sit) : 0;
+    this.flourish.poseFromClip = sit !== undefined && this.sitHips > 0.05;
 
     const cast = opts.castShadow !== false;
     this.root.traverse((o) => {
@@ -206,7 +220,10 @@ export class CharacterRig {
    */
   playOneShot(
     name: string,
-    opts: { blendIn?: number; blendOut?: number; timeScale?: number; hold?: boolean; from?: number } = {},
+    opts: {
+      blendIn?: number; blendOut?: number; timeScale?: number;
+      hold?: boolean; from?: number; loop?: boolean;
+    } = {},
   ): boolean {
     const clip = this.source.clips.get(name);
     if (!clip) return false;
@@ -244,12 +261,22 @@ export class CharacterRig {
     if (!clip) return null;
     // A pistol clip is a pose and is measured against the idle; a punch is a
     // motion and is measured against its own start. See upperBodyAdditive.
-    const reference = name.startsWith('pistol') ? this.source.clips.get('idle') : undefined;
+    const reference = /^(pistol|rifle|hold|aim)/.test(name) ? this.source.clips.get('idle') : undefined;
     const action = this.mixer.clipAction(upperBodyAdditive(clip, reference));
     action.blendMode = THREE.AdditiveAnimationBlendMode;
     action.setEffectiveWeight(0);
     this.additive.set(name, action);
     return action;
+  }
+
+  /** Forget a cached additive action, so a re-synthesised pose is rebuilt. */
+  refreshAdditive(name: string): void {
+    const cached = this.additive.get(name);
+    if (!cached) return;
+    if (this.overlay.action === cached) this.overlay.clear();
+    cached.stop();
+    this.mixer.uncacheAction(cached.getClip(), this.root);
+    this.additive.delete(name);
   }
 
   /** Where in `name` the fist arrives, as a fraction of its duration. */
@@ -335,9 +362,19 @@ export class CharacterRig {
     this.mixer.update(this.frozen ? 0 : dt);
     this.flourish.step(f, dt, this.dancing, this.aimAmount, this.aimPitch);
     this.skins.setOpacity(f.opacity);
-    // Sitting lowers the whole body onto the seat; the bent legs are the
-    // flourish's. Eased so standing up is a rise, not a pop.
-    const wantDrop = f.pose === 'sit' ? SIT_DROP : 0;
+    // Sitting. With a clip: the whole body plays it, held and looping, and the
+    // root is shifted by however far the clip's hips sit from the seat. Without
+    // one: the flourish's bent legs and a fixed drop onto the bench.
+    const seated = f.pose === 'sit' || f.pose === 'ride';
+    const clipSit = seated && this.flourish.poseFromClip;
+    if (clipSit) {
+      if (this.oneShot.clip !== 'sit') {
+        this.playOneShot('sit', { blendIn: 0.25, blendOut: 0.3, hold: true, loop: true });
+      }
+    } else if (this.oneShot.clip === 'sit') {
+      this.oneShot.stop();
+    }
+    const wantDrop = clipSit ? this.sitHips - SEAT_HEIGHT : f.pose === 'sit' ? SIT_DROP : 0;
     this.drop += (wantDrop - this.drop) * Math.min(1, dt * 8);
     this.root.position.y = -this.drop;
   }

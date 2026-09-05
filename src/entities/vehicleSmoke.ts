@@ -5,7 +5,7 @@ import * as THREE from 'three';
 const MAX = 20;
 
 let sprite: THREE.CanvasTexture | null = null;
-function puffTexture(): THREE.CanvasTexture {
+export function puffTexture(): THREE.CanvasTexture {
   if (sprite) return sprite;
   const c = document.createElement('canvas');
   c.width = c.height = 64;

@@ -38,6 +38,8 @@ export interface PosablePed {
   heading: number;
   speed: number;
   phase: number;
+  /** Ground covered on foot, metres; the far crowd's stride is read off it. */
+  walked?: number;
   mode: 'wander' | 'cross' | 'flee' | 'tumble' | 'down' | 'return' | 'idle' | 'wait' | 'ride';
   /** Their own walking pace, so the gait can be scaled to the speed actually made. */
   walkSpeed?: number;

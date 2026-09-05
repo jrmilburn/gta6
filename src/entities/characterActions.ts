@@ -114,6 +114,21 @@ export function measureTakeOff(clip: THREE.AnimationClip): number {
 }
 
 /**
+ * Where the hips sit in a clip's first frame, metres above the clip's floor.
+ *
+ * Read off the Hips position track. A seated clip puts the hips at bench height;
+ * the rig shifts its root by the difference between that and the seat it was
+ * given, so the character lands on the plank rather than above or through it.
+ */
+export function measureHipsHeight(clip: THREE.AnimationClip): number {
+  for (const track of clip.tracks) {
+    if (!/Hips\.position$/.test(track.name)) continue;
+    return track.values[1];
+  }
+  return 0;
+}
+
+/**
  * One action slot with an eased weight.
  *
  * Used for both kinds of layer. `blendIn`/`blendOut` are seconds; `weight` is
@@ -259,6 +274,23 @@ export class Layer {
   }
 
   stop(): void { this.target = 0; this.holding = false; }
+
+  /**
+   * Drop whatever is loaded this instant, no fade. For a clip that has been
+   * rebuilt underneath the slot: a fade would need the old action to keep
+   * playing, and the old action is gone.
+   */
+  clear(): void {
+    if (this.action) { this.action.stop(); this.action.setEffectiveWeight(0); }
+    if (this.outgoing) { this.outgoing.stop(); this.outgoing.setEffectiveWeight(0); }
+    this.action = null;
+    this.outgoing = null;
+    this.clip = null;
+    this.weight = 0;
+    this.outWeight = 0;
+    this.target = 0;
+    this.holding = false;
+  }
 
   update(dt: number): void {
     if (this.outgoing) {

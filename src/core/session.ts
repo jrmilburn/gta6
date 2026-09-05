@@ -25,6 +25,11 @@ import { CharacterRig } from '../entities/characterRig';
 import { SkinnedPedRenderer } from '../entities/pedSkinned';
 import { DanceSystem } from '../entities/dance';
 import { CombatSystem } from '../entities/combat';
+import { Explosions } from '../entities/explosion';
+import { Rockets } from '../entities/projectile';
+import { WEAPON_ORDER } from '../entities/weapons';
+import { synthesisePose, type PoseSpec } from '../entities/weaponPoses';
+import { CFG as CONFIG } from '../config';
 import { WantedSystem } from '../gameplay/wanted';
 import { segmentVsAabb } from '../entities/collision';
 import { TrafficSystem } from '../entities/traffic';
@@ -158,6 +163,21 @@ export function createSession(game: Game, assets: Assets, screens?: ScreensApi):
   // character the player is the procedural humanoid and the crowd is the
   // instanced one, exactly as before.
   const heroRig = assets.character ? new CharacterRig(assets.character) : null;
+  // Pose tuning hook for smoke/poseCal.spec.ts: re-synthesise one weapon pose
+  // in place and drop the rig's cached copy, so a spec can try variants
+  // without a rebuild. Harmless in the shipped game; nothing calls it.
+  if (assets.character) {
+    const source = assets.character;
+    (window as unknown as { __poses: unknown }).__poses = {
+      apply(name: string, spec: PoseSpec): boolean {
+        const clip = synthesisePose(name, spec, source.clips);
+        if (!clip) return false;
+        source.clips.set(name, clip);
+        heroRig?.refreshAdditive(name);
+        return true;
+      },
+    };
+  }
 
   const player = new Player(game, {
     pos: city.spawns.player,
@@ -343,16 +363,40 @@ export function createSession(game: Game, assets: Assets, screens?: ScreensApi):
   });
   game.events.on('busted', () => officers?.standDown());
 
+  // Explosions and the rockets that cause them (refinement 2, items 4 and 5).
+  // The explosion pool listens for `exploded` from any vehicle, so a car blown
+  // up by a rocket and one caught in the blast next to it look the same.
+  const targets = () => (officers ? [...peds.targets(), ...officers.targets()] : peds.targets());
+  const explosions = new Explosions({
+    vehicles: () => allVehicles,
+    targets,
+    alarm: (from, radius) => peds.alarm(from, radius),
+    player,
+    shake: (amount) => rig.kick(amount),
+    audio: game.audio,
+    events: game.events,
+  });
+  game.scene.add(explosions.group);
+  game.add({ update: (dt) => explosions.update(dt) });
+  const rockets = new Rockets(game.scene, {
+    targets,
+    vehicles: () => allVehicles,
+    colliders: city.colliders,
+    explosions,
+  });
+  game.add({ update: (dt) => rockets.update(dt) });
+
   const combat = new CombatSystem(game, {
     player,
     rig: () => heroRig,
     look,
     inVehicle: () => current !== null,
     blocked: () => screens?.active === true,
-    targets: () => (officers ? [...peds.targets(), ...officers.targets()] : peds.targets()),
+    targets,
     vehicles: allVehicles,
     colliders: city.colliders,
     kick: (radians) => rig.kickPitch(radians),
+    rockets,
   });
   game.add(combat);
 
@@ -570,7 +614,14 @@ export function createSession(game: Game, assets: Assets, screens?: ScreensApi):
   // to, so nothing has to remember to tell it when a state changes.
   game.add({
     update: () => {
-      session.ui.setArmed(combat.armed, combat.aiming, combat.shots);
+      session.ui.setArmed(combat.armed, combat.aiming, combat.shots, {
+        name: CONFIG.combat.weapons[combat.weapon].name,
+        index: WEAPON_ORDER.indexOf(combat.weapon),
+        names: WEAPON_ORDER.map((w) => CONFIG.combat.weapons[w].name),
+        reload: combat.reload,
+        scoped: combat.scoped,
+        changedAgo: combat.weaponChangedAgo,
+      });
       session.ui.setMinimapPolice(police.positions());
       session.ui.setGoofy(heroRig?.locomotion.goofy === true);
       session.ui.setLookHint(!look.locked);

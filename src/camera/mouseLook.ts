@@ -11,6 +11,7 @@
 // which cannot take a lock -- has a camera that simply holds still, rather than
 // a second code path to keep working.
 import * as THREE from 'three';
+import { AIM } from './footCamera';
 import { CFG } from '../config';
 import type { System } from '../types';
 import { shortestAngle, smoothDamp, smoothDampAngle } from '../core/smooth';
@@ -83,10 +84,14 @@ export class MouseLook implements System {
       this.idle = 0;
       // Screen-right turns the camera right. The game measures yaw from +Z
       // toward +X, so a rightward mouse decreases it.
-      this.yaw = wrap(this.yaw - dx * M.sensitivity);
-      this.offset = wrap(this.offset - dx * M.sensitivity);
+      // Through a scope the same mouse travel covers a fraction of the screen,
+      // so the sensitivity scales with the field of view the aim has reached.
+      const zoom = THREE.MathUtils.lerp(1, AIM.fov / CFG.camera.fovBase, THREE.MathUtils.clamp(AIM.amount, 0, 1));
+      const sens = M.sensitivity * Math.max(0.15, zoom);
+      this.yaw = wrap(this.yaw - dx * sens);
+      this.offset = wrap(this.offset - dx * sens);
       this.pitch = THREE.MathUtils.clamp(
-        this.pitch + (M.invertY ? -dy : dy) * M.sensitivity, PITCH_MIN, PITCH_MAX,
+        this.pitch + (M.invertY ? -dy : dy) * sens, PITCH_MIN, PITCH_MAX,
       );
     } else {
       this.idle += dt;

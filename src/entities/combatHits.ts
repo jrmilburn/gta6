@@ -14,9 +14,14 @@ export interface CombatVehicle {
   heading: number;
   wrecked: boolean;
   kind: VehicleKind;
-  damage(amount: number): void;
+  /** `gunfire` marks damage from a weapon: a car finished off that way goes up. */
+  damage(amount: number, gunfire?: boolean): void;
   /** Nudge, for a punch. */
   shove(x: number, z: number): void;
+  /** Already blown up; a blast has nothing more to do to it. */
+  exploded: boolean;
+  /** Blow up, now or after `delay` seconds. */
+  explode(delay: number): void;
 }
 
 /** The vehicle OBB the physics uses: 4.4 long, 2.0 wide, and about 1.5 tall. */

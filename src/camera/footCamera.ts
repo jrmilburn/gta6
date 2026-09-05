@@ -33,6 +33,8 @@ const FOOT_LOOK_AHEAD = 0.6;
 export const AIM = {
   /** 0 hip-fire, 1 fully aimed. combat.ts eases this. */
   amount: 0,
+  /** Field of view when fully aimed: the weapon's. The sniper's scope is 12. */
+  fov: CFG.combat.pistol.aimFov,
 };
 
 /** Register the mode. Idempotent; called from session.ts's module side effect. */
@@ -59,7 +61,7 @@ registerCameraMode(FOOT_CAMERA, (s: CameraSubject, f: CameraFrame) => {
   // Look slightly ahead of the focus point along the same yaw, so the character
   // sits low in frame and the street ahead of them is what fills it.
   f.look.set(cx + fx * FOOT_LOOK_AHEAD, s.y + height - rise * 0.25, cz + fz * FOOT_LOOK_AHEAD);
-  f.fov = THREE.MathUtils.lerp(CFG.camera.fovBase, P.aimFov, t);
+  f.fov = THREE.MathUtils.lerp(CFG.camera.fovBase, AIM.fov, t);
   f.posSmooth = CFG.feel.camera.footPos;
   // The look target follows the mouse on a much shorter time than the eye
   // does, so the aim feels attached to the hand while the body still swings.

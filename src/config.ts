@@ -245,6 +245,13 @@ export const CFG = {
     /** How far a clip's playback may be pushed off its authored rate. */
     timeScaleMin: 0.6,
     timeScaleMax: 1.6,
+    /**
+     * The goofy jog's own ceiling. It was authored at 1.63 m/s and stands in
+     * for a 4 m/s gait, which no clip can do inside the ordinary clamp -- it
+     * skated by a third. A cartoon run played at cartoon speed is the joke,
+     * so it alone may be pushed this far.
+     */
+    goofyTimeScaleMax: 2.8,
     /** Synthesised idle (no idle clip was supplied): breath and weight shift. */
     breathHz: 0.25,
     breathScale: 0.015,
@@ -312,6 +319,52 @@ export const CFG = {
       vehicleImpulse: 1.2,
       /** The character can still walk while punching, but no faster. */
       moveSpeed: 4,
+    },
+    /**
+     * The four weapons, selected with 1-4 or the wheel. Everything a weapon
+     * does differently lives here; weapons.ts reads the row and nothing else.
+     *
+     * `damage` is per hit on a vehicle; a pedestrian is knocked down by any
+     * hit. `spread` is the cone half-angle in degrees. `hold` picks the pose
+     * set: the pistol clips, or the two-handed rifle hold from Gunplay.fbx.
+     */
+    weapons: {
+      pistol: {
+        name: 'PISTOL', fireInterval: 0.2, damage: 15, range: 120, spread: 0.4,
+        kickDeg: 1.6, auto: false, hold: 'pistol' as const, scopeFov: 0,
+        projectile: null,
+      },
+      mg: {
+        name: 'SMG', fireInterval: 0.08, damage: 6, range: 90, spread: 1.8,
+        kickDeg: 0.7, auto: true, hold: 'rifle' as const, scopeFov: 0,
+        projectile: null,
+      },
+      sniper: {
+        name: 'SNIPER', fireInterval: 1.4, damage: 60, range: 400, spread: 0,
+        kickDeg: 3.5, auto: false, hold: 'rifle' as const, scopeFov: 12,
+        projectile: null,
+      },
+      rpg: {
+        name: 'RPG', fireInterval: 2.5, damage: 0, range: 250, spread: 0,
+        kickDeg: 5, auto: false, hold: 'rifle' as const, scopeFov: 0,
+        /** Rocket speed m/s, blast radius m, and how much it droops. */
+        projectile: { speed: 45, radius: 6, gravity: 4 },
+      },
+    },
+    /** A held SMG burst climbs: each shot adds this much kick, capped at 2x. */
+    burstClimb: 0.05,
+    explosion: {
+      /** Vehicles inside the radius take this at the centre, falling to zero at the edge. */
+      vehicleDamage: 200,
+      /** The player on foot inside `playerRadius` takes this much. */
+      playerDamage: 60,
+      playerRadius: 4,
+      /** Cars caught in one blast go up this long after it, so a chain reads as one. */
+      chainDelay: 0.3,
+      /** Shove given to a car at the centre, m/s. */
+      shove: 9,
+      /** Pedestrians this far out run from it. */
+      alarmRadius: 30,
     },
     pistol: {
       drawTime: 0.3,
@@ -389,6 +442,9 @@ export const CFG = {
       crashInView: 30,
       /** Radius within which a police car notices gunfire. */
       policeHearing: 40,
+      /** Blowing something up; the police hear it from twice as far. */
+      explosion: 120,
+      explosionHearing: 90,
       /** Heat per star, and how fast heat bleeds off with nothing happening. */
       perStar: 100,
       decayPerSecond: 100 / 15,

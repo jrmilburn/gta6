@@ -6,6 +6,7 @@ export type Action =
   | 'handbrake' | 'sprint' | 'interact' | 'camera'
   | 'hud' | 'respawn' | 'showcase' | 'pause' | 'dance'
   | 'goofy' | 'arm'
+  | 'weapon1' | 'weapon2' | 'weapon3' | 'weapon4'
   | 'up' | 'down';
 
 const BINDINGS: Record<Action, string[]> = {
@@ -27,6 +28,10 @@ const BINDINGS: Record<Action, string[]> = {
   dance:     ['KeyG'],
   goofy:     ['KeyP'],
   arm:       ['KeyH'],
+  weapon1:   ['Digit1'],
+  weapon2:   ['Digit2'],
+  weapon3:   ['Digit3'],
+  weapon4:   ['Digit4'],
   up:        ['KeyQ'],
   down:      ['KeyE'],
 };
@@ -42,6 +47,11 @@ export class Input {
    * are edge-triggered the same way keys are, so a click is one click however
    * many physics steps the frame ran.
    */
+  /**
+   * Mouse wheel notches since the last physics step: positive is away from the
+   * user. The weapon selector cycles on it. Consumed per step like a press.
+   */
+  wheel = 0;
   readonly mouse = {
     dx: 0, dy: 0, locked: false,
     left: false, right: false,
@@ -61,6 +71,10 @@ export class Input {
     });
     window.addEventListener('keyup', (e) => this.down.delete(e.code));
     window.addEventListener('blur', () => this.down.clear());
+    window.addEventListener('wheel', (e: WheelEvent) => {
+      if (!this.mouse.locked) return;
+      this.wheel += Math.sign(e.deltaY);
+    }, { passive: true });
     window.addEventListener('mousemove', (e) => {
       if (!this.mouse.locked) return;
       this.mouse.dx += e.movementX;
@@ -97,6 +111,7 @@ export class Input {
         if (isDown) this.mouse[which === 'left' ? 'leftPressed' : 'rightPressed'] = true;
       },
       lock: (v: boolean) => { this.mouse.locked = v; },
+      wheel: (notches: number) => { this.wheel += notches; },
     };
   }
 
@@ -135,6 +150,7 @@ export class Input {
    */
   endStep(): void {
     this.pressed.clear();
+    this.wheel = 0;
     this.mouse.leftPressed = false;
     this.mouse.rightPressed = false;
   }

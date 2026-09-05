@@ -1,5 +1,14 @@
 # Refinement plan 2: sitting, the far crowd, traffic that drives, four weapons
 
+> Status 2026-09-05: implemented. Items 1, 3, 4 and 5 are in; item 2's far
+> crowd walks (morph-target frames) and the sit and rifle clips are retargeted
+> onto the hero skeleton -- the T-pose the plan describes turned out to be the
+> new clips binding to nothing, because they were exported on another Mixamo
+> skeleton (`mixamorig:` against the hero's `mixamorig9`). The three weapon
+> holds and aims are synthesised poses (weaponPoses.ts), not downloads. The
+> root-level FBX clips are missing from `raw/`, so the converter cannot be
+> re-run wholesale; see ANIMATIONS.md.
+
 Follows the operating rules in `plan.md` section 0 (timebox, `// DECISION:`
 comments instead of questions, 400-line file cap, `pnpm build` + `pnpm smoke`
 green before every commit, screenshots under `screens/`). One exception is

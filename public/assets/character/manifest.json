@@ -18,12 +18,12 @@
       "source": "Breathing Idle.fbx",
       "duration": 9.93333339691162,
       "channels": 53,
-      "groundSpeed": 2.8373205360589164e-9,
+      "groundSpeed": 2.8373205360589164e-09,
       "rootMotion": {
         "x": 0.1773776262998581,
         "y": 0.02077704668045044,
         "z": 0.036033318378031254,
-        "travel": 2.818405083857721e-8
+        "travel": 2.818405083857721e-08
       },
       "inPlace": true,
       "rootYawDeg": 0
@@ -98,12 +98,12 @@
       "source": "Gangnam Style.fbx",
       "duration": 12.3666667938232,
       "channels": 53,
-      "groundSpeed": 3.522072038540517e-9,
+      "groundSpeed": 3.522072038540517e-09,
       "rootMotion": {
         "x": 1.359264463186264,
         "y": 0.13563543558120728,
         "z": 0.24067018926143646,
-        "travel": 4.3556291324472196e-8
+        "travel": 4.3556291324472196e-08
       },
       "inPlace": true,
       "rootYawDeg": 0
@@ -158,7 +158,7 @@
       "source": "gun/Pistol Idle.fbx",
       "duration": 8.30000019073486,
       "channels": 53,
-      "groundSpeed": 0.000027101495506344808,
+      "groundSpeed": 2.7101495506344808e-05,
       "rootMotion": {
         "x": 0.29013266414403915,
         "y": 0.1208500862121582,
@@ -378,12 +378,12 @@
       "source": "punches/Punching (1).fbx",
       "duration": 1,
       "channels": 53,
-      "groundSpeed": 2.4850785851713892e-8,
+      "groundSpeed": 2.4850785851713892e-08,
       "rootMotion": {
         "x": 0.03187523502856493,
         "y": 0.042787790298461914,
         "z": 0.08380126953125,
-        "travel": 2.4850785851713892e-8
+        "travel": 2.4850785851713892e-08
       },
       "inPlace": true,
       "rootYawDeg": 0
@@ -418,12 +418,12 @@
       "source": "punches/Right Hook.fbx",
       "duration": 1.10000002384186,
       "channels": 53,
-      "groundSpeed": 0.00003919116082971926,
+      "groundSpeed": 3.919116082971926e-05,
       "rootMotion": {
         "x": 0.14608915336430073,
         "y": 0.13190847635269165,
         "z": 0.08432672591879964,
-        "travel": 0.00004311027784708135
+        "travel": 4.311027784708135e-05
       },
       "inPlace": true,
       "rootYawDeg": 0
@@ -607,6 +607,46 @@
       },
       "inPlace": false,
       "rootYawDeg": -36.74
+    },
+    {
+      "name": "rifleFire",
+      "role": "once",
+      "angle": 0,
+      "armed": false,
+      "file": "anim-rifleFire.glb",
+      "bytes": 23416,
+      "source": "Gunplay.fbx",
+      "duration": 0.200000002980232,
+      "channels": 37,
+      "groundSpeed": 2.7603015091449725e-07,
+      "rootMotion": {
+        "x": 0.017881363164633512,
+        "y": 0.007052302360534668,
+        "z": 0.0013629993190988898,
+        "travel": 5.520603100553334e-08
+      },
+      "inPlace": true,
+      "rootYawDeg": 0
+    },
+    {
+      "name": "sit",
+      "role": "once",
+      "angle": 0,
+      "armed": false,
+      "file": "anim-sit.glb",
+      "bytes": 72664,
+      "source": "Sitting Idle.fbx",
+      "duration": 2.96666669845581,
+      "channels": 37,
+      "groundSpeed": 1.448097528258805e-06,
+      "rootMotion": {
+        "x": 0.00030832597985863686,
+        "y": 0.00024360418319702148,
+        "z": 0.00030340254306793213,
+        "travel": 4.296022713201568e-06
+      },
+      "inPlace": true,
+      "rootYawDeg": 0
     }
   ],
   "generated": "2026-09-03"

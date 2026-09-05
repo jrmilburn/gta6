@@ -13,6 +13,7 @@ import type { Vec2 } from '../types';
 import { NEON_COLORS, PIER, PIER_KIOSKS, PIER_LAMP_SPACING, PIER_WHEEL, type CityLayout } from './cityGen';
 import { boxAt, cylAt, mergeGeos, MeshBuilder } from './geomUtil';
 import { DECK } from './groundHeight';
+import { SEAT_HEIGHT } from '../entities/characterRig';
 import { flattenModel } from './modelInstancing';
 import { applyGroundAoTree } from './groundAo';
 
@@ -105,6 +106,11 @@ export class FerrisWheel {
         new THREE.Mesh(boxAt(0.06, GONDOLA_DROP + 1.1, 0.06, -0.8, -GONDOLA_DROP / 2 + 0.55, 0.7), steel),
         new THREE.Mesh(boxAt(0.06, GONDOLA_DROP + 1.1, 0.06, 0.8, -GONDOLA_DROP / 2 + 0.55, 0.7), steel),
         new THREE.Mesh(boxAt(1.9, 0.08, 1.7, 0, 1.15 - GONDOLA_DROP + 0.9, 0), roofMat),
+        // A bench across the back, SEAT_HEIGHT above the floor: the rider faces
+        // -Z out to sea and the seat pose puts their hips over this plank.
+        new THREE.Mesh(boxAt(1.5, 0.08, 0.5, 0, -GONDOLA_DROP + 0.05 + SEAT_HEIGHT - 0.04, 0.45), roofMat),
+        new THREE.Mesh(boxAt(0.12, 0.44, 0.5, -0.6, -GONDOLA_DROP + 0.05 + SEAT_HEIGHT / 2 - 0.04, 0.45), roofMat),
+        new THREE.Mesh(boxAt(0.12, 0.44, 0.5, 0.6, -GONDOLA_DROP + 0.05 + SEAT_HEIGHT / 2 - 0.04, 0.45), roofMat),
       );
       pivot.add(gondola);
       this.pivots.push(pivot);
@@ -130,7 +136,8 @@ export class FerrisWheel {
     const a = this.angleOf(i);
     out.x = W.x + Math.cos(a) * W.radius;
     out.y = DECK + W.hubY + Math.sin(a) * W.radius - GONDOLA_DROP + 0.05;
-    out.z = W.z;
+    // Hips over the bench at the back of the cabin, facing out to sea.
+    out.z = W.z + 0.42;
     out.heading = Math.PI;
     return out;
   }
@@ -295,7 +302,7 @@ export function buildPier(_layout: CityLayout, assets: Assets, dusk: boolean): P
       const x = side * (PIER.maxX - 1.0);
       const heading = side > 0 ? Math.PI / 2 : -Math.PI / 2; // facing outward
       const b = mergeGeos([
-        boxAt(0.55, 0.1, 1.9, 0, DECK + 0.45, 0),
+        boxAt(0.55, 0.1, 1.9, 0, DECK + SEAT_HEIGHT - 0.05, 0),
         boxAt(0.09, 0.55, 1.9, -0.24, DECK + 0.72, 0),
         boxAt(0.5, 0.45, 0.12, 0, DECK + 0.22, -0.85),
         boxAt(0.5, 0.45, 0.12, 0, DECK + 0.22, 0.85),

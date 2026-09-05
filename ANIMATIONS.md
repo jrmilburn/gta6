@@ -39,6 +39,38 @@ about.
 
 ## Done
 
+**Sitting** -- `Sitting Idle.fbx` (2.97 s, in place) is the `sit` clip. It plays
+as a held, looping full-body one-shot whenever the player or a gondola rider is
+seated, and its hips height is measured off the clip so the root lands on the
+bench: every seat in the game is `SEAT_HEIGHT` (0.5 m) above the ground the
+sitter stands on. The hand-posed sit it replaces folded the legs behind the
+body.
+
+**The rifle hold** -- `Gunplay.fbx` converts to `rifleFire`, 0.20 s, 37
+channels: a two-handed hold with the shot in it. Its first frame, held frozen,
+is the stance for the SMG, the sniper and the RPG; letting it run is the shot.
+The armed movement ring stays the pistol one for all four weapons.
+
+**Per-weapon holds and aims** -- there are no clips for the SMG, the sniper or
+the RPG, so `src/entities/weaponPoses.ts` synthesises six poses at load: each is
+the pistol aim's first frame with per-bone rotations (degrees about each bone's
+local axes) and a slow sway, registered as ordinary `once` clips (`holdMg`,
+`aimMg`, `holdSniper`, `aimSniper`, `holdRpg`, `aimRpg`). The axes were measured
+on this rig with `smoke/poseCal.spec.ts`; `smoke/weaponPoses.spec.ts` renders
+the stills in `screens/weapon-poses/`, and `window.__poses.apply(name, spec)`
+re-synthesises one pose in the running game for tuning. Real Mixamo rifle clips
+would replace them file for file: name them so the converter files them as
+`holdMg` and so on, or add a rule to `CLIP_NAMES`.
+
+**A warning about `raw/`.** The root-level clips the game was built on --
+`Breathing Idle`, `Fast Run`, `Gangnam Style`, `Jump`, `Shooting`, `Turning`,
+`Fall Over` -- are no longer in `public/assets/raw/`; only their `.fbm` texture
+folders remain. Running `pnpm assets:character` now rebuilds the manifest
+WITHOUT them and picks a different hero model. Until the FBX files are put
+back, add clips by converting and splicing their manifest entries by hand, as
+the two above were. The five models in `raw/characters/` are skipped by the
+converter for the same reason: their path matches the hero rule.
+
 **The pistol set** — `Pistol Run` (2.89 m/s, measured at 0 degrees) is the armed
 forward clip that was missing, `Pistol Run Backward` (3.16) and a second
 `Pistol Strafe` (2.31, measured at -90) give the armed ring a fast rung in every
