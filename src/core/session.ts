@@ -162,12 +162,13 @@ export function createSession(game: Game, assets: Assets, screens?: ScreensApi):
   // gets its own pool of them (section 5). Both fall back cleanly: without a
   // character the player is the procedural humanoid and the crowd is the
   // instanced one, exactly as before.
-  const heroRig = assets.character ? new CharacterRig(assets.character) : null;
+  const playerSource = assets.playerCharacter ?? assets.character;
+  const heroRig = playerSource ? new CharacterRig(playerSource) : null;
   // Pose tuning hook for smoke/poseCal.spec.ts: re-synthesise one weapon pose
   // in place and drop the rig's cached copy, so a spec can try variants
   // without a rebuild. Harmless in the shipped game; nothing calls it.
-  if (assets.character) {
-    const source = assets.character;
+  if (playerSource) {
+    const source = playerSource;
     (window as unknown as { __poses: unknown }).__poses = {
       apply(name: string, spec: PoseSpec): boolean {
         const clip = synthesisePose(name, spec, source.clips);

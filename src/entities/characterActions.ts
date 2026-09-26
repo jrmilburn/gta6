@@ -303,7 +303,7 @@ export class Layer {
     }
     if (!this.action) return;
     // A one-shot that has reached its last frame starts fading out on its own.
-    if (!this.holding && this.target > 0 && !this.action.paused
+    if (!this.holding && this.target > 0
       && this.action.loop !== THREE.LoopRepeat && this.atEnd()) {
       this.target = 0;
     }

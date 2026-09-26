@@ -19,6 +19,10 @@ import { Locomotion } from './characterLocomotion';
 import { Layer, measureHipsHeight, measureImpact, measureTakeOff, upperBodyAdditive } from './characterActions';
 import { RigMaterials } from './characterMaterials';
 import { Flourish } from './characterFlourish';
+import { WeaponAnimation } from './weaponAnimation';
+import type { WeaponId } from './weaponMesh';
+import { EMOTES } from './emotes';
+import { CharacterGrounding } from './characterGrounding';
 
 const A = CFG.anim;
 /** Target standing height; the rig only rescales if the source is outside the band. */
@@ -78,6 +82,8 @@ export class CharacterRig {
   readonly oneShot = new Layer();
   /** Additive upper-body overlays: a punch, a shot, a held aim pose. */
   readonly overlay = new Layer();
+  readonly weaponAnimation: WeaponAnimation;
+  private readonly grounding: CharacterGrounding;
 
   private readonly mixer: THREE.AnimationMixer;
   private readonly source: CharacterSource;
@@ -104,6 +110,9 @@ export class CharacterRig {
   private danceWeight = 0;
   private airWeight = 0;
   private dancing = false;
+  private emoteTime = 0;
+  private emoteName: string | null = null;
+  private readonly emoteActions = new Map<string, THREE.AnimationAction>();
 
   /**
    * Hold the current pose without advancing it. A tumbling pedestrian is thrown
@@ -142,6 +151,8 @@ export class CharacterRig {
     }
 
     this.flourish = new Flourish(this.root, this.offsets);
+    this.weaponAnimation = new WeaponAnimation(this.root);
+    this.grounding = new CharacterGrounding(this.root);
     // A supplied seated clip replaces the flourish's hand-posed legs. Its hips
     // height is read straight off the clip so the seat can be met exactly.
     const sit = this.source.clips.get('sit');
@@ -339,6 +350,7 @@ export class CharacterRig {
 
   startDance(): void {
     if (!this.dance) return;
+    this.cancelEmote();
     this.dance.reset();
     this.dance.play();
     this.dancing = true;
@@ -346,17 +358,48 @@ export class CharacterRig {
 
   stopDance(): void { this.dancing = false; }
 
+  get emote(): string | null { return this.emoteName; }
+  playEmote(name: string): boolean {
+    const spec = EMOTES[name];
+    if (!spec || !this.has(spec.clip)) return false;
+    this.stopDance();
+    let action = this.emoteActions.get(name);
+    if (!action) {
+      const clip = this.source.clips.get(spec.clip)!.clone();
+      clip.name = `emote:${name}`;
+      action = this.mixer.clipAction(clip);
+      this.emoteActions.set(name, action);
+    }
+    this.oneShot.play(action, `emote:${name}`, { from: spec.from, blendIn: 0.2, blendOut: 0.2, hold: true });
+    this.emoteName = name;
+    this.emoteTime = Math.min(spec.seconds, this.durationOf(spec.clip) - spec.from);
+    return true;
+  }
+  cancelEmote(): void {
+    if (!this.emoteName) return;
+    this.emoteName = null;
+    this.emoteTime = 0;
+    this.oneShot.stop();
+  }
+
+  recoil(id: WeaponId): void { this.weaponAnimation.recoil(id); }
+
   update(f: CharacterFrame): void {
     const dt = Math.max(f.dt, 1e-4);
+    if (this.emoteName) {
+      this.emoteTime -= dt;
+      if (this.emoteTime <= 0 || f.speed > 0.15 || f.airborne || f.pose) this.cancelEmote();
+    }
     // Undo before the mixer, apply after it. three stops writing a bone whose
     // mixed value has not changed -- which is every bone of a static idle pose --
     // so without the undo the additions below compound instead of replacing.
+    this.weaponAnimation.restore();
     this.offsets.clear();
     this.oneShot.update(dt);
     // The armed movement clips already hold the gun up; the overlay only has
     // the whole arm to add where the ordinary gait is underneath it. Last
     // frame's share, which is a frame stale and eased anyway.
-    this.overlay.scale = 1 - this.locomotion.armedShare;
+    this.overlay.scale = (1 - this.locomotion.armedShare) * (1 - Math.max(this.danceWeight, this.emoteName ? this.oneShot.weight : 0));
     this.overlay.update(dt);
     this.stepWeights(f, dt);
     this.mixer.update(this.frozen ? 0 : dt);
@@ -377,6 +420,8 @@ export class CharacterRig {
     const wantDrop = clipSit ? this.sitHips - SEAT_HEIGHT : f.pose === 'sit' ? SIT_DROP : 0;
     this.drop += (wantDrop - this.drop) * Math.min(1, dt * 8);
     this.root.position.y = -this.drop;
+    if (f.grounded && !f.airborne && !f.pose) this.grounding.update();
+    this.weaponAnimation.update(dt, this.dancing || !!this.emoteName || !!f.pose);
   }
 
   /**

@@ -34,6 +34,7 @@ export interface CombatHost {
 export interface CombatDeps {
   player: {
     pos: Vec2; y: number; heading: number; speed: number;
+    readonly velocityX: number; readonly velocityZ: number;
     onFoot: boolean; onGround: boolean;
     faceCamera: boolean; speedCap: number;
   };

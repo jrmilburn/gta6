@@ -16,6 +16,7 @@ import { ShotEffects } from './pistol';
 import { aimRay, rayHitPed, rayHitVehicle, rayHitWorld, type CombatVehicle } from './combatHits';
 import { buildWeapon, fitToHand, type WeaponId, type WeaponParts } from './weaponMesh';
 import type { Rockets } from './projectile';
+import { fitPlayerWeapon } from './weaponAnimation';
 
 export type { WeaponId } from './weaponMesh';
 
@@ -116,7 +117,7 @@ export class Arsenal {
    */
   fire(draw: number): boolean {
     const def = this.def;
-    const want = def.auto ? this.host.input.mouse.left : this.host.input.mouse.left;
+    const want = def.auto ? this.host.input.mouse.left : this.host.input.mouse.leftPressed;
     if (!want || draw < 0.95 || this.fireCooldown > 0) return false;
     this.fireCooldown = def.fireInterval;
     this.shots++;
@@ -198,7 +199,8 @@ export class Arsenal {
       let m = this.meshes.get(id);
       if (!m) { m = buildWeapon(id); this.meshes.set(id, m); }
       hand.add(m.group);
-      fitToHand(m.group, hand, forearm, knuckle);
+      if (rig.root.userData.playerCharacter) fitPlayerWeapon(m.group, id);
+      else fitToHand(m.group, hand, forearm, knuckle);
     }
     this.attachedTo = rig;
   }

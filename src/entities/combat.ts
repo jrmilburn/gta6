@@ -79,6 +79,7 @@ export class CombatSystem implements System, CombatState {
     this.punchCooldown = Math.max(0, this.punchCooldown - dt);
 
     const onFoot = this.deps.player.onFoot && !this.deps.inVehicle() && !this.deps.blocked();
+    if (!onFoot || this.host.input.mouse.left || this.host.input.mouse.right) rig?.cancelEmote();
     if (!onFoot) {
       // Holstered on entering a car, and neither button does anything there.
       this.armed = false;
@@ -216,6 +217,10 @@ export class CombatSystem implements System, CombatState {
     // The aim camera's field of view is the weapon's: the sniper scopes in.
     AIM.fov = this.arsenal.def.scopeFov > 0 ? this.arsenal.def.scopeFov : C.pistol.aimFov;
     if (!rig) return;
+    const parts = this.arsenal.parts;
+    const shooting = this.host.input.mouse.left;
+    if (parts) rig.weaponAnimation.configure(parts.group, this.weapon, this.host.camera,
+      this.draw * (shooting ? 1 : 1 - this.sprinting), this.aiming || shooting);
     rig.setAim(this.draw * (1 - this.sprinting), this.deps.look.pitch);
     // The aimed movement clips are strafes and back-steps; a sprint is neither,
     // so it hands the legs back to the ordinary run.
@@ -226,13 +231,8 @@ export class CombatSystem implements System, CombatState {
     // its direction of travel -- but not while the pistol is out and it strafes,
     // and not for the moment either side of a sharp turn, which is exactly when
     // the diagonal and backward clips should appear.
-    const ix = (this.host.input.isDown('right') ? 1 : 0) - (this.host.input.isDown('left') ? 1 : 0);
-    const iz = (this.host.input.isDown('forward') ? 1 : 0) - (this.host.input.isDown('back') ? 1 : 0);
-    if (ix === 0 && iz === 0) { rig.locomotion.moveAngle = 0; return; }
-    // Input is camera-relative, exactly as player.ts reads it.
-    const yaw = this.deps.look.yaw;
-    const wx = Math.sin(yaw) * iz - Math.cos(yaw) * ix;
-    const wz = Math.cos(yaw) * iz + Math.sin(yaw) * ix;
+    const wx = p.velocityX, wz = p.velocityZ;
+    if (Math.hypot(wx, wz) < 0.03) return;
     let angle = Math.atan2(wx, wz) - p.heading;
     while (angle > Math.PI) angle -= Math.PI * 2;
     while (angle < -Math.PI) angle += Math.PI * 2;
@@ -332,6 +332,9 @@ export class CombatSystem implements System, CombatState {
 
   private stepFiring(rig: CharacterRig): void {
     if (!this.arsenal.fire(this.draw)) return;
+    rig.recoil(this.arsenal.current);
+    // A shot impulse layers over the held stance; an automatic burst never rewinds it.
+    if (this.arsenal.def.auto) return;
     // The firing clip takes the overlay for its duration; stepAimPose puts the
     // standing pose back the moment it finishes. Already aiming with a
     // frozen-frame stance means the overlay is that same clip at the top, so
