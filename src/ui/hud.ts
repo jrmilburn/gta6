@@ -34,6 +34,18 @@ function el(tag: string, css: string, text?: string): HTMLDivElement {
   return d;
 }
 
+/** What the weapon readout and the scope need to know. */
+export interface WeaponHud {
+  name: string;
+  index: number;
+  names: string[];
+  /** 0..1 of the fire interval still to wait; drawn as the RPG's reload bar. */
+  reload: number;
+  scoped: boolean;
+  /** Seconds since the selection changed; the wheel shows briefly after. */
+  changedAgo: number;
+}
+
 export interface HudApi {
   root: HTMLDivElement;
   setStars(n: number): void;
@@ -44,7 +56,7 @@ export interface HudApi {
   /** Brief centred message, e.g. "Dance!". Replaces any toast still showing. */
   toast(text: string, seconds: number): void;
   /** Crosshair and ammo readout while the pistol is out (section 7). */
-  setArmed(armed: boolean, aiming: boolean, shots: number): void;
+  setArmed(armed: boolean, aiming: boolean, shots: number, weapon: WeaponHud): void;
   /** The goofy-run indicator (section 5). */
   setGoofy(on: boolean): void;
   /** Contextual action prompt, e.g. "E  GET IN". Null hides it. */
@@ -107,7 +119,28 @@ export function createHud(uiRoot: HTMLElement, city: CityLayout): HudApi {
     ticks.push(t);
   }
   const ammo = el('div', 'position:absolute; bottom:96px; right:20px; font-size:16px;'
-    + ' letter-spacing:0.12em; opacity:0;  transition:opacity 0.15s ease;');
+    + ' letter-spacing:0.12em; opacity:0;  transition:opacity 0.15s ease; text-align:right;');
+  // The weapon's name above the count, in the key colour, and a reload bar
+  // under it that only the RPG is slow enough to show.
+  const weaponName = el('div', 'font-weight:800; color:#ffd452; font-size:14px; letter-spacing:0.18em;');
+  const ammoText = el('div', '');
+  const reloadBar = el('div', 'height:3px; margin-top:4px; background:rgba(255,255,255,0.18); border-radius:2px; overflow:hidden;');
+  const reloadFill = el('div', 'height:100%; width:0%; background:#ffd452;');
+  reloadBar.appendChild(reloadFill);
+  ammo.append(weaponName, ammoText, reloadBar);
+  // The wheel: four names in a row, the current one lit, shown for a moment
+  // after a change so the player sees what they picked without looking down.
+  const wheel = el('div', 'position:absolute; bottom:150px; right:20px; display:flex; gap:10px;'
+    + ' font-size:12px; letter-spacing:0.14em; opacity:0; transition:opacity 0.2s ease;');
+  const wheelItems: HTMLElement[] = [];
+  // Scope: a black vignette with a round hole and a fine cross, for the sniper.
+  const scope = el('div', 'position:absolute; inset:0; pointer-events:none; opacity:0; transition:opacity 0.12s ease;'
+    + ' background:radial-gradient(circle at center, rgba(0,0,0,0) 0, rgba(0,0,0,0) 30vmin, rgba(0,0,0,0.92) 32vmin, #000 100%);');
+  const scopeRing = el('div', 'position:absolute; left:50%; top:50%; width:62vmin; height:62vmin; transform:translate(-50%,-50%);'
+    + ' border-radius:50%; border:2px solid rgba(0,0,0,0.9); box-shadow: inset 0 0 40px rgba(0,0,0,0.6);');
+  const scopeH = el('div', 'position:absolute; left:50%; top:50%; width:60vmin; height:1px; transform:translate(-50%,-50%); background:rgba(0,0,0,0.85);');
+  const scopeV = el('div', 'position:absolute; left:50%; top:50%; width:1px; height:60vmin; transform:translate(-50%,-50%); background:rgba(0,0,0,0.85);');
+  scope.append(scopeRing, scopeH, scopeV);
 
   // --- lower centre: contextual prompt ---
   // Just above the mission line, where the eye already goes for state, and only
@@ -145,6 +178,7 @@ export function createHud(uiRoot: HTMLElement, city: CityLayout): HudApi {
     ['MOUSE', 'look  ·  click punch / fire  ·  right-click aim'],
     ['E', 'get in / out'],
     ['H', 'gun'],
+    ['1-4 / WHEEL', 'weapon'],
     ['P', 'goofy walk'],
     ['G', 'gangnam style'],
   ];
@@ -169,7 +203,7 @@ export function createHud(uiRoot: HTMLElement, city: CityLayout): HudApi {
   const minimap = createMinimap(city);
   topLeft.appendChild(minimap.canvas);
 
-  root.append(topRight, bottomRight, bottomCenter, topLeft, toastEl, cross, ammo, controls, modes, prompt);
+  root.append(scope, topRight, bottomRight, bottomCenter, topLeft, toastEl, cross, ammo, wheel, controls, modes, prompt);
   uiRoot.appendChild(root);
 
   let starCount = 0;
@@ -203,10 +237,30 @@ export function createHud(uiRoot: HTMLElement, city: CityLayout): HudApi {
     setVisible(v: boolean): void {
       root.style.display = v ? '' : 'none';
     },
-    setArmed(armed: boolean, aiming: boolean, shots: number): void {
-      cross.style.opacity = armed ? '1' : '0';
+    setArmed(armed: boolean, aiming: boolean, shots: number, weapon: WeaponHud): void {
+      cross.style.opacity = armed && !weapon.scoped ? '1' : '0';
       ammo.style.opacity = armed ? '0.9' : '0';
-      ammo.textContent = `● ∞   ${shots} FIRED`;
+      weaponName.textContent = weapon.name;
+      ammoText.textContent = `● ∞   ${shots} FIRED`;
+      reloadFill.style.width = `${Math.round((1 - Math.min(1, weapon.reload)) * 100)}%`;
+      reloadBar.style.opacity = weapon.reload > 0.1 ? '1' : '0';
+      scope.style.opacity = weapon.scoped ? '1' : '0';
+      if (wheelItems.length !== weapon.names.length) {
+        wheel.replaceChildren();
+        wheelItems.length = 0;
+        for (const n of weapon.names) {
+          const item = el('div', 'padding:3px 8px; border-radius:6px; border:1px solid rgba(255,255,255,0.25);'
+            + ' background:rgba(0,0,0,0.42); font-weight:700;', n);
+          wheel.appendChild(item);
+          wheelItems.push(item);
+        }
+      }
+      wheelItems.forEach((item, i) => {
+        const on = i === weapon.index;
+        item.style.color = on ? '#ffd452' : 'rgba(255,255,255,0.7)';
+        item.style.borderColor = on ? '#ffd452' : 'rgba(255,255,255,0.25)';
+      });
+      wheel.style.opacity = weapon.changedAgo < 1.5 ? '1' : '0';
       // Aiming pulls the ticks in; hip fire spreads them out.
       const gap = aiming ? 5 : 11;
       ticks[0].style.transform = `translate(-50%, ${-gap - 9}px)`;

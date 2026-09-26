@@ -77,6 +77,8 @@ export type EventName =
   | 'shotHit'
   | 'goofyChanged'
   | 'armedChanged'
+  | 'weaponChanged'
+  | 'exploded'
   | 'roadblock'
   | 'officerShot'
   | 'cutsceneStart'

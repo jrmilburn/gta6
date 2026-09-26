@@ -10,8 +10,11 @@ import type { EventName, Vec2 } from '../types';
 import type { CharacterRig } from './characterRig';
 import type { PedTarget } from './pedestrians';
 import type { CombatVehicle } from './combatHits';
+import type { Rockets } from './projectile';
+import type { WeaponId } from './weaponMesh';
 
-type CombatAction = 'forward' | 'back' | 'left' | 'right' | 'sprint' | 'arm';
+type CombatAction = 'forward' | 'back' | 'left' | 'right' | 'sprint' | 'arm'
+  | 'weapon1' | 'weapon2' | 'weapon3' | 'weapon4';
 
 export interface CombatHost {
   scene: THREE.Scene;
@@ -20,15 +23,18 @@ export interface CombatHost {
     isDown(a: CombatAction): boolean;
     justPressed(a: CombatAction): boolean;
     mouse: { left: boolean; right: boolean; leftPressed: boolean; locked: boolean };
+    /** Wheel notches this step; the weapon selector cycles on it. */
+    wheel: number;
   };
   events: { emit(evt: EventName, payload?: unknown): void };
-  audio: { thud(impact: number): void; whoosh(): void; gunshot(): void };
+  audio: { thud(impact: number): void; whoosh(): void; gunshot(kind: WeaponId): void };
   time: number;
 }
 
 export interface CombatDeps {
   player: {
     pos: Vec2; y: number; heading: number; speed: number;
+    readonly velocityX: number; readonly velocityZ: number;
     onFoot: boolean; onGround: boolean;
     faceCamera: boolean; speedCap: number;
   };
@@ -43,6 +49,8 @@ export interface CombatDeps {
   colliders: readonly { minX: number; minZ: number; maxX: number; maxZ: number }[];
   /** Camera pitch kick, applied by the rig. */
   kick: (radians: number) => void;
+  /** The rocket pool the RPG fires into. */
+  rockets: Rockets;
 }
 
 /** What the HUD needs to draw. */
@@ -52,4 +60,9 @@ export interface CombatState {
   /** 0 holstered, 1 fully drawn; the draw and holster ease across it. */
   draw: number;
   shots: number;
+  weapon: WeaponId;
+  /** 0..1 of the fire interval still to wait. */
+  reload: number;
+  scoped: boolean;
+  weaponChangedAgo: number;
 }

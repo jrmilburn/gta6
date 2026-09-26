@@ -87,9 +87,10 @@ body to within 0.1%.
 | W A S D / Arrows | Drive / walk, relative to where you are looking |
 | Space | Handbrake (in car) / jump (on foot) |
 | Shift | Sprint |
-| Left click | Punch (unarmed) / fire (pistol drawn, held to keep firing) |
-| Right click | Aim down the pistol — over the shoulder, narrower lens |
-| H | Draw / holster the pistol |
+| Left click | Punch (unarmed) / fire (weapon drawn; the SMG fires while held) |
+| Right click | Aim — over the shoulder, narrower lens; through the scope with the sniper |
+| H | Draw / holster the current weapon |
+| 1 2 3 4 / wheel | Pick the weapon: pistol, SMG, sniper, RPG. A rocket into a car blows it up |
 | P | Goofy run — swaps the jog clip for a sillier one |
 | G | Dance for 8 seconds — orbit camera, a beat, and nearby pedestrians join in |
 | C | Cycle camera (chase, hood, orbit, drone, free-fly) |

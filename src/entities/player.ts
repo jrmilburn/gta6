@@ -163,6 +163,8 @@ export class Player implements System, Renderable, CameraSubject {
   }
 
   get onGround(): boolean { return this.legs.grounded; }
+  get velocityX(): number { return this.velX; }
+  get velocityZ(): number { return this.velZ; }
 
   update(dt: number): void {
     if (!this.onFoot) return;
@@ -410,6 +412,7 @@ export class Player implements System, Renderable, CameraSubject {
     const y = this.prev.y + (this.y - this.prev.y) * alpha;
     const z = this.prev.z + (this.pos.z - this.prev.z) * alpha;
     const h = this.prev.heading + shortestAngle(this.prev.heading, this.heading) * alpha;
+    this.writeMesh(x, y, z, h);
     this.mesh.update({
       dt,
       time: this.host.time,
@@ -423,7 +426,6 @@ export class Player implements System, Renderable, CameraSubject {
       opacity: 1 - this.fade,
       pose: this.carry ? 'ride' : this.swimming ? 'swim' : this.pose,
     });
-    this.writeMesh(x, y, z, h);
   }
 
   private writeMesh(x: number, y: number, z: number, heading: number): void {

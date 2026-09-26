@@ -9,6 +9,7 @@
 // Everything here is preparation, not playback -- see entities/characterRig.ts
 // for the thing that puts a character on screen.
 import * as THREE from 'three';
+import { synthesiseWeaponPoses } from '../entities/weaponPoses';
 import { CFG } from '../config';
 
 const A = CFG.anim;
@@ -143,6 +144,34 @@ function stripRootYaw(clip: THREE.AnimationClip): void {
 }
 
 /**
+ * The skeleton prefix the hero's bones carry, e.g. "mixamorig9" -- Mixamo
+ * numbers the namespace per export, and the GLTF loader strips the colon.
+ */
+function bonePrefixOf(root: THREE.Object3D): string {
+  let prefix = '';
+  root.traverse((o) => {
+    if (prefix) return;
+    const m = /^(mixamorig\d*)Hips$/.exec(o.name);
+    if (m) prefix = m[1];
+  });
+  return prefix;
+}
+
+/**
+ * Point a clip's tracks at the hero's bones whatever skeleton it was exported
+ * on. A clip downloaded on another Mixamo character carries that character's
+ * namespace ("mixamorig:Hips" against the hero's "mixamorig9:Hips"), and a
+ * track that names a bone the rig does not have binds to nothing and does
+ * nothing -- which is how a seated clip left the character standing.
+ */
+function retarget(clip: THREE.AnimationClip, prefix: string): void {
+  if (!prefix) return;
+  for (const track of clip.tracks) {
+    track.name = track.name.replace(/^mixamorig\d*:?/, prefix);
+  }
+}
+
+/**
  * Build a static idle from frame 0 of another clip.
  *
  * Joe's set has no idle download, and a character that freezes solid the
@@ -239,6 +268,7 @@ export async function loadCharacter(
 
   const clips = new Map<string, THREE.AnimationClip>();
   const info = new Map<string, ClipInfo>();
+  const bonePrefix = bonePrefixOf(hero.scene);
   for (const entry of manifest.clips) {
     let gltf;
     try {
@@ -251,6 +281,7 @@ export async function loadCharacter(
     const clip = gltf.animations[0];
     if (!clip) continue;
     clip.name = entry.name;
+    retarget(clip, bonePrefix);
     const role: ClipRole = entry.role ?? 'once';
     // Root motion is stripped from everything the CONTROLLER drives, and left
     // on everything that drives itself. A knockdown travels; a jog must not.
@@ -287,6 +318,10 @@ export async function loadCharacter(
       });
     }
   }
+
+  // The weapon holds that were never downloaded: authored as bone offsets on
+  // the rifle and pistol poses, see weaponPoses.ts.
+  synthesiseWeaponPoses(clips, info);
 
   const byRole = (role: ClipRole): string[] =>
     [...info.values()].filter((c) => c.role === role).map((c) => c.name);

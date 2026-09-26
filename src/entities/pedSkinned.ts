@@ -15,7 +15,7 @@ import { tumbleQuat, bodyQuat, type PosablePed } from './pedPose';
 import type { PedRenderer } from './pedRenderer';
 import {
   bakeStaticPose, buildPalettes, buildPaletteMaterials,
-  PED_VARIANT_COUNT, type BakedPart,
+  PED_VARIANT_COUNT, WALK_FRAMES, type BakedPart,
 } from './pedVariants';
 
 const A = CFG.anim;
@@ -28,6 +28,12 @@ const V = new THREE.Vector3();
 const S = new THREE.Vector3();
 const UP = new THREE.Vector3(0, 1, 0);
 const HIDDEN = new THREE.Matrix4().makeScale(0, 0, 0);
+/**
+ * Carrier for per-instance morph influences: InstancedMesh.setMorphAt reads
+ * them off an object, so one is kept and rewritten per pedestrian.
+ */
+const MORPH = new THREE.Mesh();
+MORPH.morphTargetInfluences = new Array<number>(WALK_FRAMES - 1).fill(0);
 
 interface Slot {
   rig: CharacterRig;
@@ -61,6 +67,8 @@ export class SkinnedPedRenderer implements PedRenderer {
   /** Every clip tagged as a knockdown by the converter. */
   private readonly falls: string[];
   private readonly capacity: number;
+  /** Ground covered by one full walk cycle, metres: the baked frames span it. */
+  private readonly strideMetres: number;
   /** This frame's pedestrians, buffered so commit() can rank them by distance. */
   private frame: Array<{ p: PosablePed; dist: number }> = [];
   private dt = 1 / 60;
@@ -86,6 +94,8 @@ export class SkinnedPedRenderer implements PedRenderer {
 
     this.parts = bakeStaticPose(source);
     for (const part of this.parts) this.owned.push(part.geometry);
+    const walk = source.info.get('walk') ?? source.info.get('jog');
+    this.strideMetres = walk ? Math.max(0.3, walk.groundSpeed * walk.duration) : 1.3;
 
     for (let v = 0; v < PED_VARIANT_COUNT; v++) {
       const row: THREE.InstancedMesh[] = [];
@@ -99,6 +109,18 @@ export class SkinnedPedRenderer implements PedRenderer {
         mesh.receiveShadow = true;
         mesh.frustumCulled = false;
         for (let i = 0; i < this.capacity; i++) mesh.setMatrixAt(i, HIDDEN);
+        // Three reads the instance's own influence list before the per-instance
+        // texture; without this call it is undefined and the render throws.
+        // The first setMorphAt allocates the morph texture; do it up front so
+        // the crowd's first frame is not also its first compile.
+        if (part.geometry.morphAttributes.position) {
+          // InstancedMesh.updateMorphTargets is a no-op in three, and the
+          // renderer reads this array whenever the per-instance texture is
+          // missing -- which it is until the first setMorphAt, and always
+          // for an empty pool.
+          mesh.morphTargetInfluences = new Array<number>(part.geometry.morphAttributes.position.length).fill(0);
+          if (this.capacity > 0) mesh.setMorphAt(0, MORPH);
+        }
         this.group.add(mesh);
         row.push(mesh);
       }
@@ -134,6 +156,7 @@ export class SkinnedPedRenderer implements PedRenderer {
   pose(p: PosablePed, dt: number): void {
     this.dt = dt;
     p.phase += dt;
+    p.walked = (p.walked ?? 0) + p.speed * dt;
     const cam = this.host.cameraPosition;
     this.frame.push({ p, dist: Math.hypot(p.pos.x - cam.x, p.pos.z - cam.z) });
   }
@@ -272,6 +295,8 @@ export class SkinnedPedRenderer implements PedRenderer {
       airborne: false,
       crouch: 0,
       opacity: 1,
+      // Riders sit on the gondola bench like the player does.
+      pose: p.mode === 'ride' ? 'ride' : null,
     });
   }
 
@@ -337,7 +362,26 @@ export class SkinnedPedRenderer implements PedRenderer {
     // straight back up, then lie down again when you walked back.
     if (!bodyQuat(p, Q)) Q.setFromAxisAngle(UP, p.heading);
     M.compose(V.set(p.pos.x, p.y, p.pos.z), Q, S.setScalar(p.scale));
-    for (const mesh of this.statics[v]) mesh.setMatrixAt(i, M);
+
+    // Where in the stride this pedestrian is: the ground they have covered, in
+    // strides, plus a per-pedestrian offset so the crowd is not on the same
+    // foot. Standing still holds the frame they stopped on.
+    const inf = MORPH.morphTargetInfluences as number[];
+    inf.fill(0);
+    const cycle = (p.walked ?? 0) / this.strideMetres + p.slot * 0.37;
+    const u = ((cycle % 1) + 1) % 1;
+    const f = u * WALK_FRAMES;
+    const a = Math.floor(f) % WALK_FRAMES;
+    const b = (a + 1) % WALK_FRAMES;
+    const t = f - Math.floor(f);
+    // Frame 0 is the base geometry and has no influence of its own; its share is
+    // whatever the targets leave over.
+    if (a > 0) inf[a - 1] = 1 - t;
+    if (b > 0) inf[b - 1] = t;
+    for (const mesh of this.statics[v]) {
+      mesh.setMatrixAt(i, M);
+      if (mesh.geometry.morphAttributes.position) mesh.setMorphAt(i, MORPH);
+    }
   }
 
   dispose(): void {

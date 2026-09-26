@@ -71,6 +71,9 @@ export class Locomotion {
   private readonly ladder: Rung[];
   private readonly directions: Directional[] = [];
   private readonly substitutes: Substitute[] = [];
+  private readonly targets = new Map<string, number>();
+  private readonly rings = new Map<boolean, Anchor[]>();
+  private allTracks: Track[] = [];
 
   constructor(mixer: THREE.AnimationMixer, source: CharacterSource, phaseOffset: number) {
     const start = (action: THREE.AnimationAction, clip: THREE.AnimationClip): void => {
@@ -118,6 +121,9 @@ export class Locomotion {
         name, action, speed: meta.groundSpeed, weight: 0, replaces: this.gaitRungs(),
       });
     }
+    this.allTracks = [...this.tracks, ...this.directions, ...this.substitutes];
+    this.rings.set(false, this.buildRing(false));
+    this.rings.set(true, this.buildRing(true));
   }
 
   /**
@@ -177,7 +183,24 @@ export class Locomotion {
   }
 
   private all(): Track[] {
-    return [...this.tracks, ...this.directions, ...this.substitutes];
+    return this.allTracks;
+  }
+
+  /**
+   * How much of the blend the armed movement clips are carrying, 0..1.
+   *
+   * Those clips -- Pistol Run, the aimed strafes and back-steps -- were authored
+   * with the gun already held up, so whatever the pistol overlay would add on
+   * top of them is added twice: arms raised over the head, and the stance's
+   * spine lean stacked onto the run's own forward pitch. The rig scales the
+   * overlay down by this share so the clips that already hold the gun are left
+   * to hold it.
+   */
+  get armedShare(): number {
+    let armed = 0, total = 0;
+    for (const t of this.all()) total += t.weight;
+    for (const d of this.directions) if (d.armed) armed += d.weight;
+    return total > 1e-4 ? THREE.MathUtils.clamp(armed / total, 0, 1) : 0;
   }
 
   /**
@@ -189,7 +212,8 @@ export class Locomotion {
    * run without the legs snapping.
    */
   step(speed: number, dt: number, suppress: number): number {
-    const targets = new Map<string, number>();
+    const targets = this.targets;
+    targets.clear();
     const forwardShare = this.splitByDirection(targets, Math.max(0, speed));
     this.splitBySpeed(speed, forwardShare, targets);
     this.applySubstitutes(targets);
@@ -212,7 +236,7 @@ export class Locomotion {
     const s = Math.max(0, speed);
     for (const t of all) {
       t.action.setEffectiveWeight(t.weight * norm);
-      t.action.timeScale = rateFor(s, t.speed);
+      t.action.timeScale = rateFor(s, t.speed, this.substitutes.includes(t as Substitute) ? A.goofyTimeScaleMax : A.timeScaleMax);
     }
     return total * norm;
   }
@@ -228,9 +252,9 @@ export class Locomotion {
    * is picking arbitrarily. It is the same speed ladder logic as straight ahead,
    * applied per direction.
    */
-  private splitByDirection(targets: Map<string, number>, speed: number): number {
-    const usable = this.directions.filter((d) => d.armed === this.armed);
-    if (usable.length === 0) return 1;
+  private buildRing(armed: boolean): Anchor[] {
+    const usable = this.directions.filter((d) => d.armed === armed);
+    if (usable.length === 0) return [];
 
     const anchors = new Map<number, Anchor>();
     const bucket = (angle: number): Anchor => {
@@ -269,7 +293,15 @@ export class Locomotion {
 
     const ring = [...anchors.values()].sort((a, b) => a.angle - b.angle);
     for (const a of ring) a.rungs.sort((x, y) => x.speed - y.speed);
+    return ring;
+  }
 
+  private splitByDirection(targets: Map<string, number>, speed: number): number {
+    const ring = this.rings.get(this.armed)!;
+    if (!ring.length) return 1;
+    // Direction must not keep a strafe cycling when velocity decays to zero.
+    const moving = THREE.MathUtils.smoothstep(speed, 0.03, 0.4);
+    if (moving === 0) return 1;
     const angle = THREE.MathUtils.clamp(this.moveAngle, -Math.PI, Math.PI);
     let lo = ring[0], hi = ring[ring.length - 1];
     for (let i = 0; i < ring.length - 1; i++) {
@@ -282,7 +314,7 @@ export class Locomotion {
     const span = hi.angle - lo.angle;
     const t = span > 1e-4 ? THREE.MathUtils.clamp((angle - lo.angle) / span, 0, 1) : 0;
 
-    let forwardShare = 0;
+    let forwardShare = 1 - moving;
     const give = (r: { dir: Directional | null }, w: number): void => {
       if (w <= 1e-4) return;
       if (r.dir === null) forwardShare += w;
@@ -302,8 +334,8 @@ export class Locomotion {
       give(a0, w * (1 - k));
       give(a1, w * k);
     };
-    put(lo, 1 - t);
-    put(hi, t);
+    put(lo, (1 - t) * moving);
+    put(hi, t * moving);
     return forwardShare;
   }
 
@@ -319,7 +351,9 @@ export class Locomotion {
     const lo = this.ladder[i];
     const hi = this.ladder[Math.min(i + 1, this.ladder.length - 1)];
     const span = hi.speed - lo.speed;
-    const t = span > 1e-3 ? THREE.MathUtils.clamp((s - lo.speed) / span, 0, 1) : 1;
+    const t = lo.speed === 0 && hi.speed > 0
+      ? THREE.MathUtils.smoothstep(s, 0.03, Math.min(0.6, hi.speed * 0.35))
+      : span > 1e-3 ? THREE.MathUtils.clamp((s - lo.speed) / span, 0, 1) : 1;
     targets.set(lo.name, (targets.get(lo.name) ?? 0) + (1 - t) * share);
     targets.set(hi.name, (targets.get(hi.name) ?? 0) + t * share);
   }
@@ -347,7 +381,7 @@ export class Locomotion {
  * speed divided by the speed the clip was authored at. Clamped, because a walk
  * stretched fourfold is a cartoon and a run at a third is a moonwalk.
  */
-function rateFor(speed: number, authored: number): number {
+function rateFor(speed: number, authored: number, max = A.timeScaleMax): number {
   if (authored <= 0.05) return 1;
-  return THREE.MathUtils.clamp(speed / authored, A.timeScaleMin, A.timeScaleMax);
+  return THREE.MathUtils.clamp(speed / authored, A.timeScaleMin, max);
 }

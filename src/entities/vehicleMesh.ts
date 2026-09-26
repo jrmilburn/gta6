@@ -168,6 +168,9 @@ function proceduralChassis(kind: VehicleKind, color: number, hero: boolean): Cha
 export class VehicleMesh {
   readonly group = new THREE.Group();
   private readonly body = new THREE.Group();
+  private shell: THREE.Mesh | null = null;
+  private paintMaterial: THREE.Material | null = null;
+  private scorchMaterial: THREE.Material | null = null;
   private readonly yaws: THREE.Group[] = [];
   /** Authored axle height per wheel; the wobble is added on top of this. */
   private readonly axleY: number[] = [];
@@ -206,6 +209,8 @@ export class VehicleMesh {
     shell.castShadow = true;
     shell.receiveShadow = true;
     this.body.add(shell);
+    this.shell = shell;
+    this.paintMaterial = chassis.bodyMaterial;
     // The kit geometry is shared between every car of this kind, so only the
     // procedural one is this mesh's to dispose.
     if (!data) this.owned.push(chassis.bodyGeo);
@@ -339,6 +344,24 @@ export class VehicleMesh {
       this.barMats[0].emissiveIntensity = f.sirenActive ? (on ? 4 : 0.15) : 0.1;
       this.barMats[1].emissiveIntensity = f.sirenActive ? (on ? 0.15 : 4) : 0.1;
     }
+  }
+
+  /**
+   * Burnt out: the paint goes to soot. A separate material rather than a tint
+   * on the paint, because the supplied cars share one material across every
+   * car of their kind and the wreck must not blacken the traffic.
+   */
+  setScorched(on = true): void {
+    if (!this.shell || !this.paintMaterial) return;
+    if (!on) { this.shell.material = this.paintMaterial; return; }
+    if (!this.scorchMaterial) {
+      const src = this.paintMaterial as THREE.MeshStandardMaterial;
+      this.scorchMaterial = this.own(new THREE.MeshStandardMaterial({
+        color: 0x141312, roughness: 0.95, metalness: 0.15,
+        map: src.map ?? null, vertexColors: src.vertexColors === true,
+      }));
+    }
+    this.shell.material = this.scorchMaterial;
   }
 
   dispose(): void {

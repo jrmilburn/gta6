@@ -78,6 +78,8 @@ export class WantedSystem implements System {
       if ((p as Payload)?.kind === 'pedestrian') this.crime(H.punchKnockdown, p as Payload);
     });
     host.events.on('shotHit', (p) => this.onShot(p as Payload));
+    // Blowing up a cruiser is an instant extra star's worth, seen or not.
+    host.events.on('exploded', (p) => { if ((p as Payload)?.police) this.add(H.shootPolice + H.perStar); });
     // Running somebody over. The knockdown flag marks the punch/shot path,
     // which has already been counted through its own event.
     host.events.on('pedHit', (p) => {
@@ -135,6 +137,10 @@ export class WantedSystem implements System {
   private onShot(p: Payload): void {
     if (p?.kind === 'pedestrian') this.crime(H.shotKnockdown, p);
     if (p?.police) this.add(H.shootPolice);
+    // A blast is a crime whoever saw it, and it is heard from further away.
+    const blast = p?.kind === 'explosion';
+    if (blast) this.crime(H.explosion, p);
+    const hearing = blast ? H.explosionHearing : H.policeHearing;
 
     // Firing where a police car can see you is worth as much as being seen
     // doing it to somebody.
@@ -142,7 +148,7 @@ export class WantedSystem implements System {
     let heard = false;
     for (const car of this.deps.police()) {
       if (car.wrecked || car.occupied) continue;
-      if (Math.hypot(car.pos.x - me.x, car.pos.z - me.z) > H.policeHearing) continue;
+      if (Math.hypot(car.pos.x - me.x, car.pos.z - me.z) > hearing) continue;
       heard = true;
       if (this.deps.clearLine(car.pos, me)) { this.add(H.gunfireNearPolice); break; }
     }

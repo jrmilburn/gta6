@@ -38,6 +38,10 @@ const FBX2GLTF = path.join(
 const CLIP_NAMES = [
   // Pistol clips first: "Pistol Walk Backward" is a pistol clip, and the
   // backward rule further down would otherwise claim it as an ordinary jog.
+  // The seated idle, before /idle|breath/ files "Sitting Idle" as the standing one.
+  [/sitting|sit/i, 'sit', 'once'],
+  // The two-handed rifle hold, before /shoot|pistol|fire/ claims it as a pistol shot.
+  [/gunplay|rifle/i, 'rifleFire', 'once'],
   [/pistol ?idle/i, 'pistolIdle', 'once'],
   [/pistol.*strafe/i, 'pistolStrafe', 'dir', 90, true],
   [/pistol.*back/i, 'pistolBack', 'dir', 180, true],
@@ -75,6 +79,7 @@ const HERO = /character|hero|main|t-?pose/i;
  * anyway -- but skipping them saves a 20 MB conversion to find that out.
  */
 const CAR_DIRS = /^(sedan|sports?car|pickup|truck|police|van|suv|saloon|cop)/i;
+const SKIP_DIRS = /^(characters|models)$/i;
 
 // DECISION: the diffuse maps stay at 2K and the normals drop to 1K. The
 // character is the one asset the camera gets within two metres of, and its skin
@@ -121,6 +126,10 @@ function findFbx(dir) {
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) {
       if (entry.name.endsWith('.fbm') || CAR_DIRS.test(entry.name)) continue;
+      // Alternative character models live here. They are not clips, and every
+      // one of them matches HERO by path, so the hero rule would pick one up
+      // in place of the main character.
+      if (SKIP_DIRS.test(entry.name)) continue;
       out.push(...findFbx(full));
     } else if (/\.fbx$/i.test(entry.name)) {
       out.push(full);

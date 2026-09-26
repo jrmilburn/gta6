@@ -9,31 +9,24 @@ import { CFG } from '../config';
 import type { System } from '../types';
 import { findBone } from '../core/character';
 import type { CharacterRig } from './characterRig';
-import type { PedTarget } from './pedestrians';
 import { AIM } from '../camera/footCamera';
-import { buildPistol, fitPistolToHand, ShotEffects, type PistolParts } from './pistol';
-import { aimRay, rayHitPed, rayHitVehicle, rayHitWorld, type CombatVehicle } from './combatHits';
+import { Arsenal, type WeaponId } from './weapons';
+import { WEAPON_POSE_NAMES } from './weaponPoses';
 import type { CombatDeps, CombatHost, CombatState } from './combatTypes';
 
 export type { CombatDeps, CombatHost, CombatState } from './combatTypes';
 
 const C = CFG.combat;
 
-const V = new THREE.Vector3();
-const HIT = new THREE.Vector3();
-const NORMAL = new THREE.Vector3();
-const MUZZLE = new THREE.Vector3();
 const FIST = new THREE.Vector3();
 
 export class CombatSystem implements System, CombatState {
   armed = false;
   aiming = false;
   draw = 0;
-  shots = 0;
 
-  private readonly effects = new ShotEffects();
-  private pistol: PistolParts | null = null;
-  private attachedTo: CharacterRig | null = null;
+  /** The weapons themselves: selection, meshes, the shot. */
+  readonly arsenal: Arsenal;
   private punchCooldown = 0;
   private lastPunch = '';
   /** Set when a punch is thrown, cleared when its impact frame has been tested. */
@@ -42,8 +35,6 @@ export class CombatSystem implements System, CombatState {
   private punchUntil = -1;
   private fistBone: THREE.Object3D | null = null;
   private fistOf: CharacterRig | null = null;
-  private fireCooldown = 0;
-  private flashLeft = 0;
   /** True while the aim pose is loaded into the overlay layer. */
   private poseHeld = false;
   /** True from a trigger pull until the firing clip has run its course. */
@@ -51,8 +42,21 @@ export class CombatSystem implements System, CombatState {
   private readonly impacts = new Map<string, number>();
 
   constructor(private readonly host: CombatHost, private readonly deps: CombatDeps) {
-    host.scene.add(this.effects.group);
+    this.arsenal = new Arsenal(host, {
+      player: deps.player, targets: deps.targets, vehicles: deps.vehicles,
+      colliders: deps.colliders, kick: deps.kick, rockets: deps.rockets,
+    }, host.scene);
   }
+
+  get weapon(): WeaponId { return this.arsenal.current; }
+  get shots(): number { return this.arsenal.shots; }
+  set shots(n: number) { this.arsenal.shots = n; }
+  /** 0..1 of the current weapon's interval still to wait; the RPG's reload. */
+  get reload(): number { return this.arsenal.reload; }
+  /** Looking down the sniper's scope. */
+  get scoped(): boolean { return this.aiming && this.arsenal.def.scopeFov > 0; }
+  /** Seconds since the weapon changed, for the HUD's wheel. */
+  get weaponChangedAgo(): number { return this.host.time - this.arsenal.changedAt; }
 
   /** True while a punch is mid-swing; the controller holds the player to a walk. */
   get punching(): boolean { return this.punchImpactAt >= 0 && this.host.time <= this.punchUntil; }
@@ -72,15 +76,10 @@ export class CombatSystem implements System, CombatState {
 
   update(dt: number): void {
     const rig = this.deps.rig();
-    this.effects.update(dt);
     this.punchCooldown = Math.max(0, this.punchCooldown - dt);
-    this.fireCooldown = Math.max(0, this.fireCooldown - dt);
-    if (this.flashLeft > 0) {
-      this.flashLeft -= dt;
-      if (this.flashLeft <= 0 && this.pistol) this.pistol.flash.visible = false;
-    }
 
     const onFoot = this.deps.player.onFoot && !this.deps.inVehicle() && !this.deps.blocked();
+    if (!onFoot || this.host.input.mouse.left || this.host.input.mouse.right) rig?.cancelEmote();
     if (!onFoot) {
       // Holstered on entering a car, and neither button does anything there.
       this.armed = false;
@@ -92,7 +91,11 @@ export class CombatSystem implements System, CombatState {
       if (!this.armed) { this.aiming = false; this.shots = 0; }
       this.host.events.emit('armedChanged', { armed: this.armed });
     }
+    // 1-4 and the wheel pick the weapon, drawn or not; a change while the gun
+    // is out swaps the pose set through the overlay's crossfade.
+    if (onFoot && this.arsenal.select() && this.armed) this.firing = false;
 
+    this.arsenal.update(dt, rig, this.draw, this.armed && onFoot && this.host.input.mouse.left);
     this.stepDraw(dt, rig);
     this.stepAim(dt, onFoot);
     if (onFoot && rig) {
@@ -110,8 +113,6 @@ export class CombatSystem implements System, CombatState {
     const time = this.armed ? C.pistol.drawTime : C.pistol.holsterTime;
     const rate = dt / Math.max(time, 1e-3);
     this.draw = want > this.draw ? Math.min(want, this.draw + rate) : Math.max(want, this.draw - rate);
-    if (rig) this.attach(rig);
-    if (this.pistol) this.pistol.group.visible = this.draw > 0.05;
     if (rig) this.stepAimPose(rig);
   }
 
@@ -139,16 +140,36 @@ export class CombatSystem implements System, CombatState {
     // the Shooting clip held frozen, which is a real sight picture too and is
     // still the fallback -- but a firing clip doing double duty as a stance
     // means the stance cannot breathe and firing has nowhere to return to.
-    const idle = rig.has('pistolIdle') ? 'pistolIdle' : 'pistolFire';
-    const aim = rig.has('pistolAim') ? 'pistolAim'
-      : rig.has('pistolFire') ? 'pistolFire' : idle;
+    //
+    // The rifle set is one clip, Gunplay: a two-handed hold with the shot in
+    // it. Its first frame is the stance for the SMG, the sniper and the RPG,
+    // held frozen the way the pistol's used to be, and letting it run is the
+    // shot. The pistol set is unchanged.
+    // Each weapon has its own hold and aim (weaponPoses.ts); the rifle clip's
+    // frozen first frame is the fallback for the three that share its shot.
+    const fireClip = this.fireClip();
+    const names = WEAPON_POSE_NAMES[this.arsenal.current];
+    const rifle = this.arsenal.def.hold === 'rifle' && rig.has('rifleFire');
+    const idle = rig.has(names.hold) ? names.hold
+      : rifle ? 'rifleFire' : rig.has('pistolIdle') ? 'pistolIdle' : 'pistolFire';
+    const aim = rig.has(names.aim) ? names.aim
+      : rifle ? 'rifleFire' : rig.has('pistolAim') ? 'pistolAim'
+        : rig.has('pistolFire') ? 'pistolFire' : idle;
     const pose = this.aiming ? aim : idle;
 
     // A shot in flight owns the overlay; the pose comes back when it finishes.
-    const loop = pose !== 'pistolFire';
-    if (this.firing && !rig.overlay.running) {
+    //
+    // Or sooner. The Shooting clip is 1.17 s of recoil and settle back into the
+    // sight picture, which is right when the player is aiming and has nowhere
+    // else to be. Fired from the hip -- not aiming, jogging off -- holding a
+    // two-handed aim over running legs for over a second looked broken, so
+    // once the recoil has played the stance takes the arms back early.
+    const loop = pose !== fireClip;
+    const recoilDone = !this.aiming && rig.overlay.clip === fireClip
+      && rig.overlay.progress >= C.pistol.fireHandBack;
+    if (this.firing && (!rig.overlay.running || recoilDone)) {
       this.firing = false;
-      // The frozen-frame fallback fires by letting its own clip run, so the
+      // A frozen-frame stance fires by letting its own clip run, so the
       // finished shot IS the pose clip and the swap below never happens; wind
       // it back to the top by hand.
       if (!loop && rig.overlay.clip === pose) rig.freezeOverlay(0);
@@ -193,7 +214,13 @@ export class CombatSystem implements System, CombatState {
     p.speedCap = this.aiming ? C.pistol.aimMoveSpeed
       : this.punching ? C.punch.moveSpeed
         : Infinity;
+    // The aim camera's field of view is the weapon's: the sniper scopes in.
+    AIM.fov = this.arsenal.def.scopeFov > 0 ? this.arsenal.def.scopeFov : C.pistol.aimFov;
     if (!rig) return;
+    const parts = this.arsenal.parts;
+    const shooting = this.host.input.mouse.left;
+    if (parts) rig.weaponAnimation.configure(parts.group, this.weapon, this.host.camera,
+      this.draw * (shooting ? 1 : 1 - this.sprinting), this.aiming || shooting);
     rig.setAim(this.draw * (1 - this.sprinting), this.deps.look.pitch);
     // The aimed movement clips are strafes and back-steps; a sprint is neither,
     // so it hands the legs back to the ordinary run.
@@ -204,31 +231,12 @@ export class CombatSystem implements System, CombatState {
     // its direction of travel -- but not while the pistol is out and it strafes,
     // and not for the moment either side of a sharp turn, which is exactly when
     // the diagonal and backward clips should appear.
-    const ix = (this.host.input.isDown('right') ? 1 : 0) - (this.host.input.isDown('left') ? 1 : 0);
-    const iz = (this.host.input.isDown('forward') ? 1 : 0) - (this.host.input.isDown('back') ? 1 : 0);
-    if (ix === 0 && iz === 0) { rig.locomotion.moveAngle = 0; return; }
-    // Input is camera-relative, exactly as player.ts reads it.
-    const yaw = this.deps.look.yaw;
-    const wx = Math.sin(yaw) * iz - Math.cos(yaw) * ix;
-    const wz = Math.cos(yaw) * iz + Math.sin(yaw) * ix;
+    const wx = p.velocityX, wz = p.velocityZ;
+    if (Math.hypot(wx, wz) < 0.03) return;
     let angle = Math.atan2(wx, wz) - p.heading;
     while (angle > Math.PI) angle -= Math.PI * 2;
     while (angle < -Math.PI) angle += Math.PI * 2;
     rig.locomotion.moveAngle = angle;
-  }
-
-  /** Parent the gun to the hand once, the first time a rig exists. */
-  private attach(rig: CharacterRig): void {
-    if (this.attachedTo === rig) return;
-    if (!this.pistol) this.pistol = buildPistol();
-    const hand = findBone(rig.root, 'RightHand');
-    if (!hand) return;
-    hand.add(this.pistol.group);
-    fitPistolToHand(
-      this.pistol.group, hand,
-      findBone(rig.root, 'RightForeArm'), findBone(rig.root, 'RightHandMiddle1'),
-    );
-    this.attachedTo = rig;
   }
 
   // --- punching (section 6) -------------------------------------------------
@@ -317,70 +325,24 @@ export class CombatSystem implements System, CombatState {
 
   // --- the pistol (section 7) ----------------------------------------------
 
+  /** Which clip is the shot for the current hold set. */
+  private fireClip(): string {
+    return this.arsenal.def.hold === 'rifle' ? 'rifleFire' : 'pistolFire';
+  }
+
   private stepFiring(rig: CharacterRig): void {
-    // DECISION: the pistol fires while the button is held, at the stated rate;
-    // the punch does not. The brief forbids auto-repeat for punches explicitly
-    // and says only "rate 0.2 s" for the gun, and a rate is a thing a held
-    // trigger has. One click still gives exactly one shot, because 0.2 s is
-    // longer than a click.
-    if (!this.host.input.mouse.left) return;
-    if (this.draw < 0.95 || this.fireCooldown > 0) return;
-    this.fireCooldown = C.pistol.fireInterval;
-    this.shots++;
-
-    // The shot comes from the camera through the crosshair, because that is
-    // what the player aimed; the tracer starts at the barrel so it looks like
-    // the gun fired it.
-    const ray = aimRay(this.host.camera, V);
-    this.pistolMuzzle(MUZZLE);
-
-    let best = C.pistol.range;
-    let hitKind: 'ped' | 'vehicle' | 'world' | null = null;
-    let hitPed: PedTarget | null = null;
-    let hitVehicle: CombatVehicle | null = null;
-
-    for (const t of this.deps.targets()) {
-      if (t.down) continue;
-      const d = rayHitPed(this.host.camera.position, ray, t);
-      if (d !== null && d < best) { best = d; hitKind = 'ped'; hitPed = t; }
-    }
-    for (const v of this.deps.vehicles) {
-      const d = rayHitVehicle(this.host.camera.position, ray, v);
-      if (d !== null && d < best) { best = d; hitKind = 'vehicle'; hitVehicle = v; }
-    }
-    const world = rayHitWorld(this.host.camera.position, ray, this.deps.colliders, best, NORMAL);
-    if (world !== null && world < best) { best = world; hitKind = 'world'; }
-
-    HIT.copy(this.host.camera.position).addScaledVector(ray, best);
-    this.effects.tracerTo(MUZZLE, HIT);
-    if (this.pistol) { this.pistol.flash.visible = true; this.flashLeft = C.pistol.flashTime; }
-    this.host.audio.gunshot();
-    this.deps.kick((C.pistol.kickDeg * Math.PI) / 180);
-
-    if (hitKind === 'ped' && hitPed) {
-      hitPed.knockDown(this.deps.player.pos.x, this.deps.player.pos.z);
-      this.host.events.emit('shotHit', { kind: 'pedestrian', x: hitPed.x, z: hitPed.z });
-    } else if (hitKind === 'vehicle' && hitVehicle) {
-      hitVehicle.damage(C.pistol.vehicleDamage);
-      // Sparks off the bodywork, thrown back toward the shooter.
-      this.effects.spark(HIT, NORMAL.copy(ray).multiplyScalar(-1));
-      this.host.events.emit('shotHit', {
-        kind: 'vehicle', x: hitVehicle.pos.x, z: hitVehicle.pos.z, police: hitVehicle.kind === 'police',
-      });
-    } else if (hitKind === 'world') {
-      this.effects.mark(HIT, NORMAL);
-      this.host.events.emit('shotHit', { kind: 'world', x: HIT.x, z: HIT.z });
-    } else {
-      this.host.events.emit('shotHit', { kind: 'miss', x: HIT.x, z: HIT.z });
-    }
-
+    if (!this.arsenal.fire(this.draw)) return;
+    rig.recoil(this.arsenal.current);
+    // A shot impulse layers over the held stance; an automatic burst never rewinds it.
+    if (this.arsenal.def.auto) return;
     // The firing clip takes the overlay for its duration; stepAimPose puts the
-    // standing pose back the moment it finishes.
-    // Already aiming means the overlay is that same clip frozen at the top, so
+    // standing pose back the moment it finishes. Already aiming with a
+    // frozen-frame stance means the overlay is that same clip at the top, so
     // firing is simply letting it run.
-    if (rig.has('pistolFire')) {
-      if (rig.overlay.clip === 'pistolFire') rig.overlay.resume();
-      else rig.playOverlay('pistolFire', { blendIn: 0.04, blendOut: 0.1, hold: true });
+    const clip = this.fireClip();
+    if (rig.has(clip)) {
+      if (rig.overlay.clip === clip) rig.overlay.resume();
+      else rig.playOverlay(clip, { blendIn: 0.04, blendOut: 0.1, hold: true });
       this.firing = true;
     }
   }
@@ -398,20 +360,7 @@ export class CombatSystem implements System, CombatState {
     return this.fistBone.getWorldPosition(FIST);
   }
 
-  /** World-space muzzle, falling back to a point in front of the chest. */
-  private pistolMuzzle(out: THREE.Vector3): THREE.Vector3 {
-    if (this.pistol && this.pistol.group.visible) {
-      this.pistol.muzzle.getWorldPosition(out);
-      return out;
-    }
-    const p = this.deps.player;
-    return out.set(
-      p.pos.x + Math.sin(p.heading) * 0.4, p.y + 1.4, p.pos.z + Math.cos(p.heading) * 0.4,
-    );
-  }
-
   dispose(): void {
-    this.effects.dispose();
-    this.pistol?.dispose();
+    this.arsenal.dispose();
   }
 }

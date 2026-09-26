@@ -94,10 +94,14 @@ export class Audio {
    * A pistol shot: a bright noise crack over a low thump, 0.1 s in total.
    * Synthesised like everything else -- no audio files anywhere in this project.
    */
-  gunshot(): void {
+  gunshot(kind: 'pistol' | 'mg' | 'sniper' | 'rpg' = 'pistol'): void {
     if (!this.ctx || !this.master) return;
+    if (kind === 'rpg') { this.launch(); return; }
     const t = this.ctx.currentTime;
-    const dur = 0.1;
+    // The SMG is the pistol's crack, shorter and quieter, so a burst reads as a
+    // rattle; the sniper is longer and lower with a tail.
+    const dur = kind === 'mg' ? 0.06 : kind === 'sniper' ? 0.22 : 0.1;
+    const loud = kind === 'mg' ? 0.6 : kind === 'sniper' ? 1.4 : 1;
     const buf = this.ctx.createBuffer(1, Math.ceil(this.ctx.sampleRate * dur), this.ctx.sampleRate);
     const d = buf.getChannelData(0);
     for (let i = 0; i < d.length; i++) {
@@ -110,20 +114,86 @@ export class Audio {
     hp.type = 'highpass';
     hp.frequency.value = 900;
     const crack = this.ctx.createGain();
-    crack.gain.value = 0.35;
+    crack.gain.value = 0.35 * loud;
     src.connect(hp).connect(crack).connect(this.master);
     src.start(t);
 
     // The body of the report, which is what makes it a gun and not a hi-hat.
     const o = this.ctx.createOscillator();
     o.type = 'sine';
-    o.frequency.setValueAtTime(180, t);
-    o.frequency.exponentialRampToValueAtTime(55, t + 0.09);
+    const low = kind === 'sniper' ? 120 : 180;
+    const tail = kind === 'sniper' ? 0.3 : kind === 'mg' ? 0.08 : 0.12;
+    o.frequency.setValueAtTime(low, t);
+    o.frequency.exponentialRampToValueAtTime(kind === 'sniper' ? 40 : 55, t + tail * 0.75);
     const g = this.ctx.createGain();
-    g.gain.setValueAtTime(0.5, t);
-    g.gain.exponentialRampToValueAtTime(0.001, t + 0.12);
+    g.gain.setValueAtTime(0.5 * loud, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + tail);
     o.connect(g).connect(this.master);
-    o.start(t); o.stop(t + 0.14);
+    o.start(t); o.stop(t + tail + 0.02);
+  }
+
+  /** A rocket leaving the tube: a rising whoosh of filtered noise, 0.5 s. */
+  private launch(): void {
+    if (!this.ctx || !this.master) return;
+    const t = this.ctx.currentTime;
+    const dur = 0.5;
+    const buf = this.ctx.createBuffer(1, Math.ceil(this.ctx.sampleRate * dur), this.ctx.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < d.length; i++) {
+      const u = i / d.length;
+      d[i] = (Math.random() * 2 - 1) * Math.sin(Math.PI * u);
+    }
+    const src = this.ctx.createBufferSource();
+    src.buffer = buf;
+    const bp = this.ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.setValueAtTime(300, t);
+    bp.frequency.exponentialRampToValueAtTime(2400, t + dur);
+    bp.Q.value = 1.2;
+    const g = this.ctx.createGain();
+    g.gain.value = 0.6;
+    src.connect(bp).connect(g).connect(this.master);
+    src.start(t);
+  }
+
+  /**
+   * An explosion: a low sine sweep under a noise burst through a lowpass that
+   * opens and closes, with a tail over a second long. Synthesised like
+   * everything else.
+   */
+  explosion(distance = 10): void {
+    if (!this.ctx || !this.master) return;
+    const t = this.ctx.currentTime;
+    const loud = Math.min(1, 12 / Math.max(6, distance));
+    const dur = 1.3;
+    const buf = this.ctx.createBuffer(1, Math.ceil(this.ctx.sampleRate * dur), this.ctx.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < d.length; i++) {
+      const k = 1 - i / d.length;
+      d[i] = (Math.random() * 2 - 1) * k * k * k;
+    }
+    const src = this.ctx.createBufferSource();
+    src.buffer = buf;
+    const lp = this.ctx.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.setValueAtTime(400, t);
+    lp.frequency.exponentialRampToValueAtTime(3000, t + 0.08);
+    lp.frequency.exponentialRampToValueAtTime(200, t + dur);
+    const g = this.ctx.createGain();
+    g.gain.setValueAtTime(1.0 * loud, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+    src.connect(lp).connect(g).connect(this.master);
+    src.start(t);
+
+    const o = this.ctx.createOscillator();
+    o.type = 'sine';
+    o.frequency.setValueAtTime(90, t);
+    o.frequency.exponentialRampToValueAtTime(30, t + 0.6);
+    const og = this.ctx.createGain();
+    og.gain.setValueAtTime(0.9 * loud, t);
+    og.gain.exponentialRampToValueAtTime(0.001, t + 0.7);
+    o.connect(og).connect(this.master);
+    o.start(t); o.stop(t + 0.75);
   }
 
   /** Optional 4-bar ambient loop (plan 9, "if time allows"): two chords, a slow

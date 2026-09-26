@@ -23,6 +23,7 @@ export interface DanceHost {
   input: {
     isDown(a: DanceAction): boolean;
     justPressed(a: DanceAction): boolean;
+    mouse?: { left: boolean; right: boolean };
   };
   events: { emit(evt: EventName, payload?: unknown): void };
   audio: { startBeat(bpm: number, gain: number): void; stopBeat(): void };
@@ -67,7 +68,7 @@ export class DanceSystem implements System {
     ORBIT.angle = (this.elapsed / DURATION) * Math.PI * 2;
     this.deps.crowd(this.deps.player.pos, A.danceJoinRadius);
 
-    if (this.elapsed >= DURATION || this.cancelled()) this.stop();
+    if (this.elapsed >= DURATION || this.cancelled() || !this.canStart()) this.stop();
   }
 
   private canStart(): boolean {
@@ -81,7 +82,7 @@ export class DanceSystem implements System {
   private cancelled(): boolean {
     const i = this.host.input;
     return i.isDown('forward') || i.isDown('back') || i.isDown('left') || i.isDown('right')
-      || i.isDown('handbrake') || i.justPressed('interact');
+      || i.isDown('handbrake') || i.justPressed('interact') || !!i.mouse?.left || !!i.mouse?.right;
   }
 
   private start(): void {

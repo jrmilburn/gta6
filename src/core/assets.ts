@@ -9,6 +9,7 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
 import { RGBELoader } from 'three/examples/jsm/loaders/RGBELoader.js';
 import { loadCharacter, type CharacterSource } from './character';
+import { loadPlayerCharacter } from './playerCharacter';
 
 const BASE = 'assets/';
 
@@ -82,6 +83,7 @@ export interface Assets {
   suppliedProp(name: SuppliedProp): THREE.Object3D | null;
   /** The skinned hero and its clips, or null when running procedural. */
   character: CharacterSource | null;
+  playerCharacter?: CharacterSource | null;
   nature(name: NatureModel): THREE.Object3D | null;
   prop(name: PropModel): THREE.Object3D | null;
   street(name: StreetModel): THREE.Object3D | null;
@@ -192,6 +194,10 @@ export async function loadAssets(
     (url) => new Promise((resolve, reject) => { gltf.load(url, resolve, undefined, reject); }),
     tick,
   ));
+  const playerCharacter = character ? await attempt('player character', () => loadPlayerCharacter(
+    character, (url) => new Promise((resolve, reject) => { gltf.load(url, resolve, undefined, reject); }),
+    renderer.capabilities.getMaxAnisotropy(),
+  )) : null;
 
   await group(CAR_MODELS, 'cars', cars);
   await group(SUPPLIED_CARS, 'supplied', supplied);
@@ -210,6 +216,7 @@ export async function loadAssets(
     ok: env !== null,
     env,
     character: character ?? null,
+    playerCharacter,
     failed,
     material: (n) => materials.get(n) ?? null,
     car: (n) => cars.get(n) ?? null,

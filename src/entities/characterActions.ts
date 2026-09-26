@@ -114,6 +114,21 @@ export function measureTakeOff(clip: THREE.AnimationClip): number {
 }
 
 /**
+ * Where the hips sit in a clip's first frame, metres above the clip's floor.
+ *
+ * Read off the Hips position track. A seated clip puts the hips at bench height;
+ * the rig shifts its root by the difference between that and the seat it was
+ * given, so the character lands on the plank rather than above or through it.
+ */
+export function measureHipsHeight(clip: THREE.AnimationClip): number {
+  for (const track of clip.tracks) {
+    if (!/Hips\.position$/.test(track.name)) continue;
+    return track.values[1];
+  }
+  return 0;
+}
+
+/**
  * One action slot with an eased weight.
  *
  * Used for both kinds of layer. `blendIn`/`blendOut` are seconds; `weight` is
@@ -122,6 +137,14 @@ export function measureTakeOff(clip: THREE.AnimationClip): number {
  */
 export class Layer {
   weight = 0;
+  /**
+   * A multiplier on everything this slot shows, applied after the eased
+   * weight. The rig drives it from how much of the body underneath already
+   * carries the pose: an aim overlay over a clip authored aiming adds nothing
+   * but a second pair of raised arms. It scales the clip on its way out too, so
+   * a crossfade cannot momentarily show more than the slot is allowed to.
+   */
+  scale = 1;
   action: THREE.AnimationAction | null = null;
   /** Name of the clip currently loaded, so a caller can avoid repeats. */
   clip: string | null = null;
@@ -129,6 +152,18 @@ export class Layer {
   private target = 0;
   private blendIn = 0.1;
   private blendOut = 0.15;
+  /**
+   * The clip being replaced, still playing while it fades under the new one.
+   *
+   * Swapping used to stop the old action dead and start the new one at
+   * whatever weight the slot already had -- which was 1 -- so every pose
+   * change was a hard cut no matter what `blendIn` said. Most visible when a
+   * shot finished and the arms popped from the sight picture straight down to
+   * the relaxed hold mid-stride. Both actions play through the swap now, the
+   * old one fading out at the same rate the new one fades in.
+   */
+  private outgoing: THREE.AnimationAction | null = null;
+  private outWeight = 0;
   /**
    * Hold the last frame at full weight instead of fading out when the clip
    * ends. A knocked-down pedestrian lies on the ground; without this the fall
@@ -198,9 +233,18 @@ export class Layer {
     } = {},
   ): void {
     if (this.action && this.action !== action) {
-      this.action.stop();
-      this.action.setEffectiveWeight(0);
+      // A third clip arriving mid-fade evicts the one already on its way out.
+      if (this.outgoing && this.outgoing !== action) {
+        this.outgoing.stop();
+        this.outgoing.setEffectiveWeight(0);
+      }
+      this.outgoing = this.action;
+      this.outWeight = this.weight;
+      this.weight = 0;
     }
+    // Coming straight back to the clip that was fading out: it is the live one
+    // again, and there is nothing left to fade.
+    if (this.outgoing === action) { this.outgoing = null; this.outWeight = 0; }
     this.action = action;
     this.clip = name;
     this.blendIn = opts.blendIn ?? 0.1;
@@ -231,17 +275,42 @@ export class Layer {
 
   stop(): void { this.target = 0; this.holding = false; }
 
+  /**
+   * Drop whatever is loaded this instant, no fade. For a clip that has been
+   * rebuilt underneath the slot: a fade would need the old action to keep
+   * playing, and the old action is gone.
+   */
+  clear(): void {
+    if (this.action) { this.action.stop(); this.action.setEffectiveWeight(0); }
+    if (this.outgoing) { this.outgoing.stop(); this.outgoing.setEffectiveWeight(0); }
+    this.action = null;
+    this.outgoing = null;
+    this.clip = null;
+    this.weight = 0;
+    this.outWeight = 0;
+    this.target = 0;
+    this.holding = false;
+  }
+
   update(dt: number): void {
+    if (this.outgoing) {
+      this.outWeight = Math.max(0, this.outWeight - dt / Math.max(this.blendIn, 1e-3));
+      this.outgoing.setEffectiveWeight(this.outWeight * this.scale);
+      if (this.outWeight <= 0.001) {
+        this.outgoing.stop();
+        this.outgoing = null;
+      }
+    }
     if (!this.action) return;
     // A one-shot that has reached its last frame starts fading out on its own.
-    if (!this.holding && this.target > 0 && !this.action.paused
+    if (!this.holding && this.target > 0
       && this.action.loop !== THREE.LoopRepeat && this.atEnd()) {
       this.target = 0;
     }
     const rate = dt / Math.max(this.target > this.weight ? this.blendIn : this.blendOut, 1e-3);
     const delta = this.target - this.weight;
     this.weight = Math.abs(delta) <= rate ? this.target : this.weight + Math.sign(delta) * rate;
-    this.action.setEffectiveWeight(this.weight);
+    this.action.setEffectiveWeight(this.weight * this.scale);
     if (this.weight <= 0.001 && this.target === 0) {
       this.action.stop();
       this.action = null;
